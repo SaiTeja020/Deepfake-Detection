@@ -23,7 +23,7 @@ The trained model weights are hosted separately on Hugging Face.
 The model was trained on a deepfake image dataset sourced from Kaggle.
 
 🔗 **Kaggle Dataset Link:**  
-> _[PLACE KAGGLE DATASET LINK HERE]_
+> _(https://www.kaggle.com/datasets/manjilkarki/deepfake-and-real-images/suggestions)_
 
 ### Expected Dataset Structure
 
@@ -70,4 +70,3 @@ cd Deepfake-Detection-ViT
 ## Install dependencies:
 
 pip install -r requirements.txt
-
