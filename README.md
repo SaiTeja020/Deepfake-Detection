@@ -1,0 +1,73 @@
+# Deepfake Detection using Vision Transformer (ViT)
+
+## Overview
+
+This project implements a **Deepfake Image Detection System** using a fine-tuned **Vision Transformer (ViT-Base-Patch16-224)** model.  
+The objective is to classify facial images as **Real** or **Fake** using deep learning techniques and transformer-based architectures.
+
+This repository contains the training pipeline, evaluation scripts, and inference code.  
+The trained model weights are hosted separately on Hugging Face.
+
+---
+
+## Model Architecture
+
+- Backbone: ViT-Base-Patch16-224
+- Framework: PyTorch + Hugging Face Transformers
+- Task: Binary Image Classification (Real vs Fake)
+
+---
+
+## Dataset
+
+The model was trained on a deepfake image dataset sourced from Kaggle.
+
+🔗 **Kaggle Dataset Link:**  
+> _[PLACE KAGGLE DATASET LINK HERE]_
+
+### Expected Dataset Structure
+
+Dataset/
+│
+├── train/
+│ ├── real/
+│ └── fake/
+│
+├── val/
+│ ├── real/
+│ └── fake/
+│
+└── test/
+| ├── real/
+| └── fake/
+
+
+---
+
+## Pretrained Model
+
+The fine-tuned model is available on Hugging Face:
+
+🔗 **Hugging Face Model Link:**  
+> _[PLACE HUGGING FACE MODEL LINK HERE]_
+
+You can load the model directly using:
+
+```python
+from transformers import ViTForImageClassification, ViTImageProcessor
+
+model = ViTForImageClassification.from_pretrained("YOUR_HF_MODEL_LINK")
+processor = ViTImageProcessor.from_pretrained("YOUR_HF_MODEL_LINK")
+```
+
+## Installation
+
+### Clone the repository:
+
+git clone https://github.com/your-username/Deepfake-Detection-ViT.git
+cd Deepfake-Detection-ViT
+
+## Install dependencies:
+
+pip install -r requirements.txt
+
