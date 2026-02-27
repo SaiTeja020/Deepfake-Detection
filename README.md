@@ -50,7 +50,7 @@ Dataset/<br>
 The fine-tuned model is available on Hugging Face:
 
 🔗 **Hugging Face Model Link:**  
-> _[PLACE HUGGING FACE MODEL LINK HERE]_
+> _[https://huggingface.co/SARVM/ViT_Deepfake]_
 
 You can load the model directly using:
 
