@@ -28,19 +28,19 @@ The model was trained on a deepfake image dataset sourced from Kaggle.
 
 ### Expected Dataset Structure
 
-Dataset/
-│
-├── train/
-│ ├── real/
-│ └── fake/
-│
-├── val/
-│ ├── real/
-│ └── fake/
-│
-└── test/
-| ├── real/
-| └── fake/
+Dataset/<br>
+│<br>
+├── train/<br>
+│ ├── real/<br>
+│ └── fake/<br>
+│<br>
+├── val/<br>
+│ ├── real/<br>
+│ └── fake/<br>
+│<br>
+└── test/<br>
+| ├── real/<br>
+| └── fake/<br>
 
 
 ---
