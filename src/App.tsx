@@ -45,12 +45,6 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
 
   return (
     <>
-      <button
-        onClick={() => setMobileOpen(!isMobileOpen)}
-        className={`fixed top-8 right-8 z-50 p-3 rounded-full lg:hidden transition-all border shadow-lg ${isDark ? 'bg-zinc-900 border-zinc-800 text-white/70' : 'bg-white border-slate-200 text-slate-600'}`}
-      >
-        {isMobileOpen ? <XMarkIcon className="w-5 h-5" /> : <Bars3Icon className="w-5 h-5" />}
-      </button>
 
       {isMobileOpen && (
         <div
@@ -72,17 +66,14 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
         `}
       >
         <div className="p-6 flex items-center justify-between border-b border-zinc-900/50">
-          {(!isCollapsed || isMobileOpen) && (
-            <div className="flex items-center space-x-3">
-              <div className="relative group">
-                <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur opacity-40 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
-                <div className="relative w-9 h-9 flex items-center justify-center">
-                  <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
-                </div>
-              </div>
-              <span className={`text-xl font-extrabold tracking-tighter heading-font ${isDark ? 'text-white' : 'text-slate-900'}`}>Foresight</span>
+          <div className="flex items-center space-x-3">
+            <div className="relative w-9 h-9 flex items-center justify-center">
+              <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
             </div>
-          )}
+            {!isCollapsed && (
+              <span className={`text-xl font-extrabold tracking-tighter heading-font ${isDark ? 'text-white' : 'text-slate-900'}`}>Foresight</span>
+            )}
+          </div>
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             className={`hidden lg:flex p-1.5 rounded-lg hover:bg-zinc-800/10 transition-colors ${isDark ? 'text-zinc-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}
@@ -101,13 +92,13 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
                 to={item.path}
                 onClick={() => setMobileOpen(false)}
                 className={`
-                  relative flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all group
-                  ${active
+                    relative flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all group
+                    ${active
                     ? (isDark ? 'bg-blue-600/10 text-white shadow-sm' : 'bg-blue-50 text-blue-600')
                     : (isDark ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900/50' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100')
                   }
-                  ${isCollapsed && !isMobileOpen ? 'justify-center' : ''}
-                `}
+                    ${isCollapsed && !isMobileOpen ? 'justify-center' : ''}
+                  `}
               >
                 <item.icon className={`w-5 h-5 flex-shrink-0 transition-colors ${active ? (isDark ? 'text-blue-500' : 'text-blue-600') : 'group-hover:text-blue-500'}`} />
                 {(!isCollapsed || isMobileOpen) && (
@@ -148,8 +139,47 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
             </Link>
           )}
         </div>
-      </aside>
+      </aside >
     </>
+  );
+};
+
+const NavHeader = ({ theme, isLoggedIn, isMobileOpen, setMobileOpen }: {
+  theme: 'dark' | 'light',
+  isLoggedIn: boolean,
+  isMobileOpen: boolean,
+  setMobileOpen: (v: boolean) => void
+}) => {
+  const isDark = theme === 'dark';
+  return (
+    <header className={`sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b px-6 md:px-8 backdrop-blur-xl transition-colors duration-500 ${isDark ? 'bg-[#09090b]/80 border-zinc-900/50' : 'bg-white/90 border-slate-200/60'}`}>
+      <div className="flex items-center space-x-3">
+        <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-8 h-8 object-contain" />
+        <span className={`text-lg font-black tracking-tighter heading-font uppercase ${isDark ? 'text-white' : 'text-slate-900'}`}>Foresight</span>
+      </div>
+
+      <div className="flex items-center space-x-4 md:space-x-6">
+        <nav className={`hidden md:flex items-center space-x-6 text-[11px] font-bold uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+          <Link to="/" className="hover:text-primary transition-colors">Home</Link>
+          <Link to="/product" className="hover:text-primary transition-colors">Analyze</Link>
+          <Link to="/compare" className="hover:text-primary transition-colors">Models</Link>
+        </nav>
+        {!isLoggedIn && (
+          <Link
+            to="/login"
+            className={`px-4 py-1.5 md:px-5 md:py-2 rounded-lg font-bold text-[10px] uppercase tracking-widest transition-all ${isDark ? 'bg-white text-black hover:bg-zinc-200' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
+          >
+            Sign In
+          </Link>
+        )}
+        <button
+          onClick={() => setMobileOpen(!isMobileOpen)}
+          className={`p-2 rounded-lg transition-all border lg:hidden ${isDark ? 'bg-zinc-900 border-zinc-800 text-white/70' : 'bg-white border-slate-200 text-slate-600'}`}
+        >
+          {isMobileOpen ? <XMarkIcon className="w-5 h-5" /> : <Bars3Icon className="w-5 h-5" />}
+        </button>
+      </div>
+    </header>
   );
 };
 
@@ -174,7 +204,8 @@ const App: React.FC = () => {
     <Router>
       <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${theme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#fafafa] text-[#0f172a]'}`}>
         <main className={`flex-1 transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
-          <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pb-0">
+          <NavHeader theme={theme} isLoggedIn={isLoggedIn} isMobileOpen={isMobileOpen} setMobileOpen={setMobileOpen} />
+          <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pt-8 lg:pb-0">
             <Routes>
               <Route path="/" element={<Landing theme={theme} isLoggedIn={isLoggedIn} />} />
               <Route path="/login" element={!isLoggedIn ? <Login theme={theme} onLogin={handleLogin} /> : <Navigate to="/product" />} />
