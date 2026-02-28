@@ -63,7 +63,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
         className={`
           fixed top-0 left-0 bottom-0 z-40
           flex flex-col
-          transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]
+          sidebar-transition
           border-r
           ${isDark ? 'bg-[#09090b]/80 border-zinc-900/50' : 'bg-white/90 border-slate-200/60'}
           ${isCollapsed ? 'w-20' : 'w-64'}
@@ -154,10 +154,11 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
 };
 
 const App: React.FC = () => {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isHovered, setIsHovered] = useState(false);
   const [isMobileOpen, setMobileOpen] = useState(false);
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [isLoggedIn, setIsLoggedIn] = useState(false); // Default false for design testing
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -167,11 +168,13 @@ const App: React.FC = () => {
   const handleLogin = () => setIsLoggedIn(true);
   const handleLogout = () => setIsLoggedIn(false);
 
+  const sidebarCollapsed = isCollapsed && !isHovered;
+
   return (
     <Router>
-      <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${theme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#ffffff] text-[#0f172a]'}`}>
-        <main className={`flex-1 transition-all duration-700 ease-[cubic-bezier(0.23,1,0.32,1)] ${isCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
-          <div className="max-w-[1400px] mx-auto min-h-screen p-6 md:p-12 lg:p-16">
+      <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${theme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#fafafa] text-[#0f172a]'}`}>
+        <main className={`flex-1 transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
+          <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pb-0">
             <Routes>
               <Route path="/" element={<Landing theme={theme} isLoggedIn={isLoggedIn} />} />
               <Route path="/login" element={!isLoggedIn ? <Login theme={theme} onLogin={handleLogin} /> : <Navigate to="/product" />} />
@@ -182,16 +185,21 @@ const App: React.FC = () => {
             </Routes>
           </div>
         </main>
-        <Sidebar
-          isCollapsed={isCollapsed}
-          setIsCollapsed={setIsCollapsed}
-          isMobileOpen={isMobileOpen}
-          setMobileOpen={setMobileOpen}
-          theme={theme}
-          toggleTheme={toggleTheme}
-          isLoggedIn={isLoggedIn}
-          onLogout={handleLogout}
-        />
+        <div
+          onMouseEnter={() => setIsHovered(true)}
+          onMouseLeave={() => setIsHovered(false)}
+        >
+          <Sidebar
+            isCollapsed={sidebarCollapsed}
+            setIsCollapsed={setIsCollapsed}
+            isMobileOpen={isMobileOpen}
+            setMobileOpen={setMobileOpen}
+            theme={theme}
+            toggleTheme={toggleTheme}
+            isLoggedIn={isLoggedIn}
+            onLogout={handleLogout}
+          />
+        </div>
       </div>
     </Router>
   );

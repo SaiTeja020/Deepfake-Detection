@@ -1,21 +1,22 @@
 :root {
-    --primary: #3b82f6;
-    --primary-hover: #2563eb;
-    --success: #10b981;
-    --danger: #f43f5e;
+    --primary: #2563eb;
+    --primary-hover: #1d4ed8;
+    --success: #059669;
+    --danger: #e11d48;
     --bg-dark: #09090b;
     --bg-light: #ffffff;
     --surface-dark: #121215;
     --surface-light: #f8fafc;
-    --border-dark: #1e293b;
+    --border-dark: #27272a;
     --border-light: #e2e8f0;
     --text-dark: #fafafa;
     --text-light: #0f172a;
-    --text-muted-dark: #71717a;
+    --text-muted-dark: #a1a1aa;
     --text-muted-light: #64748b;
-    --radius: 0.75rem;
-    --radius-lg: 1rem;
-    --radius-xl: 1.5rem;
+    --radius: 0.5rem;
+    --radius-lg: 0.75rem;
+    --radius-xl: 1rem;
+    --accent: #10b981;
 }
 
 * {
@@ -181,58 +182,20 @@ body {
     background: rgba(59, 130, 246, 0.04);
 }
 
-/* Background Motion */
-.bg-blob {
-    position: fixed;
-    border-radius: 50%;
-    filter: blur(80px);
-    z-index: -1;
-    opacity: 0.08;
-    pointer-events: none;
+/* Background & Patterns */
+.bg-geometric {
+    background-image: radial-gradient(var(--border-light) 1px, transparent 1px);
+    background-size: 40px 40px;
+    opacity: 0.4;
 }
 
-[data-theme='light'] .bg-blob {
-    opacity: 0.05;
+[data-theme='dark'] .bg-geometric {
+    background-image: radial-gradient(var(--border-dark) 1px, transparent 1px);
+    opacity: 0.2;
 }
 
-.animate-float {
-    animation: float 20s ease-in-out infinite;
-}
-
-.animate-float-reverse {
-    animation: float-reverse 25s ease-in-out infinite;
-}
-
-@keyframes float {
-
-    0%,
-    100% {
-        transform: translate(0, 0) scale(1);
-    }
-
-    33% {
-        transform: translate(30px, -50px) scale(1.1);
-    }
-
-    66% {
-        transform: translate(-20px, 20px) scale(0.9);
-    }
-}
-
-@keyframes float-reverse {
-
-    0%,
-    100% {
-        transform: translate(0, 0) scale(1);
-    }
-
-    33% {
-        transform: translate(-40px, 40px) scale(0.95);
-    }
-
-    66% {
-        transform: translate(20px, -30px) scale(1.05);
-    }
+.sidebar-transition {
+    transition: width 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* Modals & Overlays */
@@ -390,4 +353,28 @@ body {
     background: var(--danger);
     color: white;
     box-shadow: 0 5px 15px -5px rgba(244, 63, 94, 0.4);
+}
+
+.scan-line {
+    position: absolute;
+    top: -100%;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--primary);
+    box-shadow: 0 0 15px var(--primary);
+    animation: scan 4s linear infinite;
+    z-index: 10;
+    opacity: 0.2;
+    pointer-events: none;
+}
+
+@keyframes scan {
+    0% {
+        top: -10%;
+    }
+
+    100% {
+        top: 110%;
+    }
 }
