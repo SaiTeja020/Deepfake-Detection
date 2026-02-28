@@ -77,7 +77,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
               <div className="relative group">
                 <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur opacity-40 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
                 <div className="relative w-9 h-9 flex items-center justify-center">
-                  <img src="/foresight_logo_concept_1772270766513.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
+                  <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
                 </div>
               </div>
               <span className={`text-xl font-extrabold tracking-tighter heading-font ${isDark ? 'text-white' : 'text-slate-900'}`}>Foresight</span>

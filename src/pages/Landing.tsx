@@ -130,7 +130,7 @@ const Landing: React.FC<{ theme: 'dark' | 'light', isLoggedIn: boolean }> = ({ t
           <div className="space-y-6">
             <div className="flex items-center space-x-3">
               <div className="relative w-8 h-8 flex items-center justify-center">
-                <img src="/foresight_logo_concept_1772270766513.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
+                <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
               </div>
               <h2 className="text-xl font-extrabold tracking-tighter heading-font uppercase">Foresight</h2>
             </div>
