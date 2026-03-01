@@ -6,6 +6,7 @@ import Compare from './pages/Compare';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
+import Signup from './pages/Signup';
 import {
   HomeIcon,
   BeakerIcon,
@@ -210,6 +211,7 @@ const App: React.FC = () => {
             <Routes>
               <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={isLoggedIn} />} />
               <Route path="/login" element={!isLoggedIn ? <Login theme={activeTheme} onLogin={handleLogin} /> : <Navigate to="/product" />} />
+              <Route path="/signup" element={<Signup theme={activeTheme} />} />
               <Route path="/product" element={isLoggedIn ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
               <Route path="/compare" element={isLoggedIn ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
               <Route path="/profile" element={isLoggedIn ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
