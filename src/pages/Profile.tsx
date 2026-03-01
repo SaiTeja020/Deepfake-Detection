@@ -215,9 +215,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
    return (
       <div className="relative min-h-screen pb-20 overflow-x-hidden">
-         {/* Background Motion Elements */}
-         <div className="bg-blob w-[500px] h-[500px] bg-blue-500/20 -top-40 -left-20 animate-float" />
-         <div className="bg-blob w-[400px] h-[400px] bg-indigo-500/10 bottom-20 right-0 animate-float-reverse" />
+         {/* Background elements removed */}
 
          <div className="space-y-24 fade-in relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             {/* User Info Header */}
