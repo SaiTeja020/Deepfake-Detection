@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import {
     UserIcon,
     EnvelopeIcon,
@@ -9,6 +10,7 @@ import {
     ArrowRightIcon,
     SparklesIcon
 } from '@heroicons/react/24/outline';
+import { auth } from "../firebase";
 
 const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     const navigate = useNavigate();
@@ -20,11 +22,30 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         password: '',
         confirmPassword: ''
     });
+    const [error, setError] = useState<string | null>(null);
+    const [isLoading, setIsLoading] = useState(false);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        // Handle signup logic here
-        navigate('/login');
+        setError(null);
+
+        if (formData.password !== formData.confirmPassword) {
+            setError("Passwords do not match.");
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
+            await updateProfile(userCredential.user, {
+                displayName: formData.fullName
+            });
+            navigate('/login');
+        } catch (err: any) {
+            setError(err.message || 'Failed to create identity.');
+        } finally {
+            setIsLoading(false);
+        }
     };
 
     const inputStyles = `w-full pl-12 pr-4 py-4 rounded-2xl border outline-none transition-all text-sm
@@ -112,12 +133,28 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                         </header>
 
                         <form onSubmit={handleSubmit} className="space-y-4">
+                            {error && (
+                                <motion.div
+                                    initial={{ opacity: 0, height: 0 }}
+                                    animate={{ opacity: 1, height: 'auto' }}
+                                    className={`p-4 rounded-xl text-xs font-medium border ${isDark ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-rose-50 border-rose-200 text-rose-600'}`}
+                                >
+                                    {error}
+                                </motion.div>
+                            )}
                             <div className="grid grid-cols-1 gap-4">
                                 <div className="space-y-1.5">
                                     <label className={labelStyles}>Full Name</label>
                                     <div className="relative">
                                         <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                                        <input type="text" required className={inputStyles} placeholder="John Doe" />
+                                        <input
+                                            type="text"
+                                            required
+                                            className={inputStyles}
+                                            placeholder="John Doe"
+                                            value={formData.fullName}
+                                            onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
+                                        />
                                     </div>
                                 </div>
 
@@ -125,7 +162,14 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                     <label className={labelStyles}>Work Email</label>
                                     <div className="relative">
                                         <EnvelopeIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                                        <input type="email" required className={inputStyles} placeholder="name@agency.gov" />
+                                        <input
+                                            type="email"
+                                            required
+                                            className={inputStyles}
+                                            placeholder="name@agency.gov"
+                                            value={formData.email}
+                                            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                                        />
                                     </div>
                                 </div>
 
@@ -134,14 +178,28 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                         <label className={labelStyles}>Password</label>
                                         <div className="relative">
                                             <LockClosedIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                                            <input type="password" required className={inputStyles} placeholder="••••••••" />
+                                            <input
+                                                type="password"
+                                                required
+                                                className={inputStyles}
+                                                placeholder="••••••••"
+                                                value={formData.password}
+                                                onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                                            />
                                         </div>
                                     </div>
                                     <div className="space-y-1.5">
                                         <label className={labelStyles}>Confirm</label>
                                         <div className="relative">
                                             <LockClosedIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
-                                            <input type="password" required className={inputStyles} placeholder="••••••••" />
+                                            <input
+                                                type="password"
+                                                required
+                                                className={inputStyles}
+                                                placeholder="••••••••"
+                                                value={formData.confirmPassword}
+                                                onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -151,10 +209,11 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                 whileHover={{ scale: 1.02 }}
                                 whileTap={{ scale: 0.98 }}
                                 type="submit"
-                                className="w-full py-4 mt-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-2"
+                                disabled={isLoading}
+                                className={`w-full py-4 mt-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-2 ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
                             >
-                                <span>Create Identity</span>
-                                <ArrowRightIcon className="w-4 h-4" />
+                                <span>{isLoading ? 'Processing...' : 'Create Identity'}</span>
+                                {!isLoading && <ArrowRightIcon className="w-4 h-4" />}
                             </motion.button>
                         </form>
 

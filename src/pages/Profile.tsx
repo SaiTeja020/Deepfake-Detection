@@ -12,6 +12,9 @@ import {
    CameraIcon
 } from '@heroicons/react/24/outline';
 import { ModelType } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { updateProfile } from 'firebase/auth';
+
 
 interface EditProfileModalProps {
    isOpen: boolean;
@@ -179,14 +182,26 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
 
 const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const isDark = theme === 'dark';
+   const { user: firebaseUser } = useAuth();
    const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
    const [user, setUser] = useState({
-      name: 'Venkata Sai',
-      username: 'venkatasai_foresight',
+      name: firebaseUser?.displayName || 'Venkata Sai',
+      username: firebaseUser?.email?.split('@')[0] || 'venkatasai_foresight',
       bio: 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
-      avatar: null
+      avatar: firebaseUser?.photoURL || null
    });
+
+   useEffect(() => {
+      if (firebaseUser) {
+         setUser(prev => ({
+            ...prev,
+            name: firebaseUser.displayName || prev.name,
+            username: firebaseUser.email?.split('@')[0] || prev.username,
+            avatar: firebaseUser.photoURL || prev.avatar
+         }));
+      }
+   }, [firebaseUser]);
 
    const stats = [
       { label: 'Total Analyzed', value: '428', icon: MagnifyingGlassIcon },
@@ -208,7 +223,18 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       return item.result.toLowerCase() === filter;
    });
 
-   const handleSaveProfile = (updatedUser: any) => {
+   const handleSaveProfile = async (updatedUser: any) => {
+      if (firebaseUser) {
+         try {
+            await updateProfile(firebaseUser, {
+               displayName: updatedUser.name,
+               photoURL: updatedUser.avatar
+            });
+         } catch (error) {
+            console.error("Failed to update profile:", error);
+            alert("Failed to save changes to server.");
+         }
+      }
       setUser(updatedUser);
       setIsEditModalOpen(false);
    };

@@ -7,6 +7,9 @@ import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import { useAuth } from './context/AuthContext';
+import { auth } from './firebase';
+import { signOut } from 'firebase/auth';
 import {
   HomeIcon,
   BeakerIcon,
@@ -142,6 +145,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
           ) : (
             <Link
               to="/login"
+              onClick={() => setMobileOpen(false)}
               className={`flex items-center space-x-3 px-3 py-2.5 transition-all group rounded-lg ${isCollapsed && !isMobileOpen ? 'justify-center' : ''} ${isDark ? 'text-blue-500 hover:text-blue-400 hover:bg-blue-500/5' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 font-medium'}`}
             >
               <UserCircleIcon className="w-5 h-5 flex-shrink-0" />
@@ -160,7 +164,7 @@ const App: React.FC = () => {
   const [isMobileOpen, setMobileOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
   const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { user, loading } = useAuth();
 
   useEffect(() => {
     const root = document.documentElement;
@@ -198,8 +202,24 @@ const App: React.FC = () => {
     });
   };
 
-  const handleLogin = () => setIsLoggedIn(true);
-  const handleLogout = () => setIsLoggedIn(false);
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Logout failed", error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${activeTheme === 'dark' ? 'bg-[#09090b]' : 'bg-[#fafafa]'}`}>
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className={`text-sm font-medium tracking-widest uppercase opacity-50 ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Initializing Terminal</p>
+        </div>
+      </div>
+    );
+  }
 
   const sidebarCollapsed = isCollapsed && !isHovered;
 
@@ -209,14 +229,14 @@ const App: React.FC = () => {
         <main className={`flex-1 transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
           <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pb-0">
             <Routes>
-              <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={isLoggedIn} />} />
-              <Route path="/login" element={!isLoggedIn ? <Login theme={activeTheme} onLogin={handleLogin} /> : <Navigate to="/product" />} />
-              <Route path="/signup" element={<Signup theme={activeTheme} />} />
-              <Route path="/product" element={isLoggedIn ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
-              <Route path="/compare" element={isLoggedIn ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
-              <Route path="/profile" element={isLoggedIn ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
+              <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={!!user} />} />
+              <Route path="/login" element={!user ? <Login theme={activeTheme} /> : <Navigate to="/product" />} />
+              <Route path="/signup" element={!user ? <Signup theme={activeTheme} /> : <Navigate to="/product" />} />
+              <Route path="/product" element={user ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
+              <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
+              <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
               {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
-              <Route path="/settings" element={isLoggedIn ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
+              <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
             </Routes>
           </div>
         </main>
@@ -231,7 +251,7 @@ const App: React.FC = () => {
             setMobileOpen={setMobileOpen}
             theme={activeTheme}
             toggleTheme={toggleTheme}
-            isLoggedIn={isLoggedIn}
+            isLoggedIn={!!user}
             onLogout={handleLogout}
           />
         </div>

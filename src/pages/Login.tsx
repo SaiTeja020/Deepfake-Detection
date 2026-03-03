@@ -1,23 +1,35 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion'; // Highly recommended for fluidity
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   EnvelopeIcon,
   LockClosedIcon,
   ArrowRightIcon,
-  FingerPrintIcon // Swapped Shield for Fingerprint for forensics vibe
+  FingerPrintIcon
 } from '@heroicons/react/24/outline';
+import { auth } from "../firebase";
 
-const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ theme, onLogin }) => {
+const Login: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const navigate = useNavigate();
   const isDark = theme === 'dark';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogin();
-    navigate('/product');
+    setIsLoading(true);
+    setError(null);
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
+      navigate('/product');
+    } catch (err: any) {
+      setError(err.message || 'Failed to initialize session.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -54,6 +66,16 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ the
               Sign in to access facial forensics terminal.
             </p>
           </header>
+
+          {error && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className={`mb-6 p-4 rounded-xl text-xs font-medium border ${isDark ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-rose-50 border-rose-200 text-rose-600'}`}
+            >
+              {error}
+            </motion.div>
+          )}
 
           <form className="space-y-5" onSubmit={handleSubmit}>
             <div className="space-y-1.5">
@@ -99,10 +121,13 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ the
               whileHover={{ scale: 1.01 }}
               whileTap={{ scale: 0.98 }}
               type="submit"
-              className="w-full py-4 mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-3 group"
+              disabled={isLoading}
+              className={`w-full py-4 mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-3 group ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
-              <span className="tracking-wide">Initialize Session</span>
-              <ArrowRightIcon className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              <span className="tracking-wide">
+                {isLoading ? 'Processing...' : 'Initialize Session'}
+              </span>
+              {!isLoading && <ArrowRightIcon className="w-4 h-4 group-hover:translate-x-1 transition-transform" />}
             </motion.button>
           </form>
 

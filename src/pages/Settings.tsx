@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     KeyIcon,
     ArrowRightOnRectangleIcon,
@@ -7,6 +8,9 @@ import {
     SunIcon,
     ComputerDesktopIcon,
 } from '@heroicons/react/24/outline';
+import { signOut, updatePassword, deleteUser } from "firebase/auth";
+import { auth } from "../firebase";
+import { useAuth } from "../context/AuthContext";
 
 interface SettingsProps {
     theme: 'dark' | 'light' | 'system';
@@ -57,9 +61,13 @@ const Modal = ({
 };
 
 const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => {
+    const navigate = useNavigate();
+    const { user } = useAuth();
     // Toggles state
     const [saveImages, setSaveImages] = useState(false);
     const [allowData, setAllowData] = useState(true);
+
+    const [newPassword, setNewPassword] = useState('');
 
     // Modals
     const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
@@ -93,8 +101,9 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                     <input
                                         type="email"
                                         id="email"
-                                        defaultValue="admin@foresight.io"
-                                        className="w-full sm:w-64 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-zinc-800 bg-white/50 dark:bg-zinc-900/40 text-slate-800 dark:text-zinc-100 focus:outline-none focus:border-blue-500/50 dark:focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 dark:focus:ring-blue-500/10 transition-all duration-200 ease-in-out"
+                                        defaultValue={user?.email || "admin@foresight.io"}
+                                        readOnly
+                                        className="w-full sm:w-64 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-zinc-800 bg-white/10 dark:bg-zinc-900/40 text-slate-400 dark:text-zinc-500 cursor-not-allowed focus:outline-none transition-all duration-200 ease-in-out"
                                     />
                                 </div>
                             </div>
@@ -110,7 +119,14 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                 Change Password
                             </button>
                             <button
-                                onClick={() => alert('Logging out...')}
+                                onClick={async () => {
+                                    try {
+                                        await signOut(auth);
+                                        navigate('/login');
+                                    } catch (error: any) {
+                                        alert(error.message || "Failed to logout. Please try again.");
+                                    }
+                                }}
                                 className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 text-sm font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-300 dark:border-zinc-800 hover:text-slate-900 dark:hover:text-white hover:-translate-y-[1px] hover:bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:shadow-sm transition-all duration-200 ease-in-out active:translate-y-0 active:shadow-none"
                             >
                                 <ArrowRightOnRectangleIcon className="w-4 h-4 opacity-70" />
@@ -268,6 +284,8 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">New Password</label>
                         <input
                             type="password"
+                            value={newPassword}
+                            onChange={(e) => setNewPassword(e.target.value)}
                             className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-[#0c0c0e] text-slate-800 dark:text-zinc-100 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 transition-all duration-200"
                         />
                     </div>
@@ -280,9 +298,17 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         Cancel
                     </button>
                     <button
-                        onClick={() => {
-                            alert('Password updated');
-                            setIsPasswordModalOpen(false);
+                        onClick={async () => {
+                            if (user && newPassword) {
+                                try {
+                                    await updatePassword(user, newPassword);
+                                    alert('Password updated successfully');
+                                    setIsPasswordModalOpen(false);
+                                    setNewPassword('');
+                                } catch (error: any) {
+                                    alert(error.message || 'Failed to update password. You may need to login again.');
+                                }
+                            }
                         }}
                         className="px-4 py-2 text-sm font-medium rounded-lg bg-slate-800 dark:bg-white text-white dark:text-black hover:bg-slate-900 dark:hover:bg-zinc-200 hover:-translate-y-[1px] hover:shadow-md active:translate-y-0 shadow-sm transition-all duration-200"
                     >
@@ -351,9 +377,16 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         Cancel
                     </button>
                     <button
-                        onClick={() => {
-                            alert('Account deleted forever.');
-                            setIsDeleteConfirmOpen(false);
+                        onClick={async () => {
+                            if (user) {
+                                try {
+                                    await deleteUser(user);
+                                    alert('Account deleted forever.');
+                                    setIsDeleteConfirmOpen(false);
+                                } catch (error: any) {
+                                    alert(error.message || 'Failed to delete account. You may need to login again.');
+                                }
+                            }
                         }}
                         className="px-4 py-2 text-sm font-medium rounded-lg bg-rose-600 text-white hover:bg-rose-700 hover:-translate-y-[1px] hover:shadow-md active:translate-y-0 shadow-sm transition-all duration-200"
                     >
