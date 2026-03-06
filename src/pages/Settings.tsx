@@ -23,28 +23,30 @@ const Modal = ({
     onClose,
     title,
     children,
+    activeTheme,
 }: {
     isOpen: boolean;
     onClose: () => void;
     title: string;
     children: React.ReactNode;
+    activeTheme: 'dark' | 'light';
 }) => {
     if (!isOpen) return null;
 
     return (
         <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/20 dark:bg-black/40 backdrop-blur-sm p-4 transition-opacity duration-200"
+            className={`fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm p-4 transition-opacity duration-200 ${activeTheme === 'dark' ? 'bg-black/40' : 'bg-slate-900/20'}`}
             onClick={onClose}
         >
             <div
-                className="w-full max-w-md rounded-2xl bg-white dark:bg-[#121215] border border-slate-200/50 dark:border-zinc-800 shadow-xl overflow-hidden"
+                className={`w-full max-w-md rounded-2xl shadow-xl overflow-hidden border ${activeTheme === 'dark' ? 'bg-[#121215] border-zinc-800' : 'bg-white border-slate-200/50'}`}
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="px-6 py-4 border-b border-slate-100 dark:border-zinc-800/50 flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-800 dark:text-zinc-100">{title}</h3>
+                <div className={`px-6 py-4 border-b flex items-center justify-between ${activeTheme === 'dark' ? 'border-zinc-800/50' : 'border-slate-100'}`}>
+                    <h3 className={`text-sm font-semibold ${activeTheme === 'dark' ? 'text-zinc-100' : 'text-slate-800'}`}>{title}</h3>
                     <button
                         onClick={onClose}
-                        className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:text-zinc-500 dark:hover:text-zinc-300 transition-colors duration-200"
+                        className={`p-1 rounded-md transition-colors duration-200 ${activeTheme === 'dark' ? 'text-zinc-500 hover:text-zinc-300' : 'text-slate-400 hover:text-slate-600'}`}
                     >
                         <span className="sr-only">Close</span>
                         <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -91,7 +93,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
 
                     <div className="space-y-4">
                         {/* Email Field container */}
-                        <div className="p-5 rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:border-slate-300 dark:hover:border-zinc-700 hover:-translate-y-[1px] transition-all duration-200 ease-in-out group">
+                        <div className={`p-5 rounded-xl border shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:-translate-y-[1px] transition-all duration-200 ease-in-out group ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                                 <div>
                                     <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-zinc-300 mb-1">Email Address</label>
@@ -103,7 +105,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                         id="email"
                                         defaultValue={user?.email || "admin@foresight.io"}
                                         readOnly
-                                        className="w-full sm:w-64 px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-zinc-800 bg-white/10 dark:bg-zinc-900/40 text-slate-400 dark:text-zinc-500 cursor-not-allowed focus:outline-none transition-all duration-200 ease-in-out"
+                                        className={`w-full sm:w-64 px-3 py-2 text-sm rounded-lg border cursor-not-allowed focus:outline-none transition-all duration-200 ease-in-out ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/40 text-zinc-300' : 'border-slate-200 bg-white text-slate-700'}`}
                                     />
                                 </div>
                             </div>
@@ -113,7 +115,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         <div className="flex flex-col sm:flex-row gap-4">
                             <button
                                 onClick={() => setIsPasswordModalOpen(true)}
-                                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 text-sm font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-300 dark:hover:border-zinc-700 hover:text-slate-900 dark:hover:text-white hover:-translate-y-[1px] hover:bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:shadow-sm transition-all duration-200 ease-in-out active:translate-y-0 active:shadow-none"
+                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium shadow-sm transition-all duration-200 ease-in-out active:translate-y-0 active:shadow-none ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:border-zinc-700 hover:text-white hover:bg-zinc-800/50' : 'border-slate-200/60 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900 hover:bg-slate-50 hover:-translate-y-[1px]'}`}
                             >
                                 <KeyIcon className="w-4 h-4 opacity-70" />
                                 Change Password
@@ -127,7 +129,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                         alert(error.message || "Failed to logout. Please try again.");
                                     }
                                 }}
-                                className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 text-sm font-medium text-slate-600 dark:text-zinc-300 hover:border-slate-300 dark:border-zinc-800 hover:text-slate-900 dark:hover:text-white hover:-translate-y-[1px] hover:bg-white shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:shadow-sm transition-all duration-200 ease-in-out active:translate-y-0 active:shadow-none"
+                                className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl border text-sm font-medium shadow-sm transition-all duration-200 ease-in-out active:translate-y-0 active:shadow-none ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/60 text-zinc-300 hover:border-zinc-700 hover:text-white hover:bg-zinc-800/50' : 'border-slate-200/60 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-900 hover:bg-slate-50 hover:-translate-y-[1px]'}`}
                             >
                                 <ArrowRightOnRectangleIcon className="w-4 h-4 opacity-70" />
                                 Logout
@@ -142,14 +144,14 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         Appearance
                     </h2>
 
-                    <div className="p-5 rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:border-slate-300 dark:hover:border-zinc-700 hover:-translate-y-[1px] transition-all duration-200 ease-in-out">
+                    <div className={`p-5 rounded-xl border shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:-translate-y-[1px] transition-all duration-200 ease-in-out ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6">
                             <div>
                                 <p className="text-sm font-medium text-slate-700 dark:text-zinc-300 mb-1">Color Theme</p>
                                 <p className="text-xs text-slate-500 dark:text-zinc-500">Select or customize your UI workspace.</p>
                             </div>
 
-                            <div className="flex p-1 rounded-lg bg-slate-100/50 dark:bg-zinc-900/50 border border-slate-200/40 dark:border-zinc-800 overflow-hidden w-full sm:w-auto">
+                            <div className={`flex p-1 rounded-lg border overflow-hidden w-full sm:w-auto ${activeTheme === 'dark' ? 'bg-zinc-900/50 border-zinc-800' : 'bg-slate-100/50 border-slate-200/40'}`}>
                                 {[
                                     { id: 'light', label: 'Light', icon: SunIcon },
                                     { id: 'dark', label: 'Dark', icon: MoonIcon },
@@ -159,8 +161,8 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                         key={t.id}
                                         onClick={() => setTheme(t.id as any)}
                                         className={`flex-1 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 text-xs font-medium rounded-md transition-all duration-200 ease-in-out ${theme === t.id
-                                            ? 'bg-white dark:bg-zinc-800 text-slate-800 dark:text-zinc-100 shadow-sm ring-1 ring-slate-200 dark:ring-white/5'
-                                            : 'text-slate-500 dark:text-zinc-500 hover:text-slate-700 dark:hover:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-800/50'
+                                            ? (activeTheme === 'dark' ? 'bg-zinc-800 text-zinc-100 shadow-sm ring-1 ring-white/5' : 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-200')
+                                            : (activeTheme === 'dark' ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50' : 'text-slate-500 hover:text-slate-700 hover:bg-white')
                                             }`}
                                     >
                                         <t.icon className="w-3.5 h-3.5" />
@@ -178,7 +180,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         Privacy
                     </h2>
 
-                    <div className="rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:border-slate-300 dark:hover:border-zinc-700 hover:-translate-y-[1px] transition-all duration-200 ease-in-out overflow-hidden divide-y divide-slate-200/50 dark:divide-zinc-800/50">
+                    <div className={`rounded-xl border shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:-translate-y-[1px] transition-all duration-200 ease-in-out overflow-hidden divide-y ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700 divide-zinc-800/50' : 'border-slate-200 bg-white hover:border-slate-300 divide-slate-200/50'}`}>
                         {/* Toggle 1 */}
                         <div className="p-5 flex items-center justify-between group cursor-pointer hover:bg-slate-50/80 dark:hover:bg-zinc-900/60 transition-colors" onClick={() => setSaveImages(!saveImages)}>
                             <div className="pr-4">
@@ -226,7 +228,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         Security
                     </h2>
 
-                    <div className="p-5 rounded-xl border border-slate-200/60 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/60 shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:border-slate-300 dark:hover:border-zinc-700 hover:-translate-y-[1px] transition-all duration-200 ease-in-out group">
+                    <div className={`p-5 rounded-xl border shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:-translate-y-[1px] transition-all duration-200 ease-in-out group ${activeTheme === 'dark' ? 'border-zinc-800 bg-zinc-900/60 hover:border-zinc-700' : 'border-slate-200 bg-white hover:border-slate-300'}`}>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
                                 <p className="text-sm font-medium text-slate-700 dark:text-zinc-300 mb-1">Account Password</p>
@@ -234,7 +236,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                             </div>
                             <button
                                 onClick={() => setIsPasswordModalOpen(true)}
-                                className="w-full sm:w-auto px-4 py-2 rounded-lg border border-slate-200/80 dark:border-zinc-700 bg-white/80 dark:bg-zinc-800/50 text-sm font-medium text-slate-700 dark:text-zinc-300 hover:bg-white dark:hover:bg-zinc-800/60 hover:border-slate-300 dark:hover:border-zinc-600 shadow-sm transition-all duration-200 ease-in-out"
+                                className={`w-full sm:w-auto px-4 py-2 rounded-lg border text-sm font-medium shadow-sm transition-all duration-200 ease-in-out ${activeTheme === 'dark' ? 'border-zinc-700 bg-zinc-800/50 text-zinc-300 hover:bg-zinc-800/60 hover:border-zinc-600' : 'border-slate-200/80 bg-white/80 text-slate-700 hover:bg-white hover:border-slate-300'}`}
                             >
                                 Update Password
                             </button>
@@ -268,6 +270,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
 
             {/* Change Password Modal */}
             <Modal
+                activeTheme={activeTheme}
                 isOpen={isPasswordModalOpen}
                 onClose={() => setIsPasswordModalOpen(false)}
                 title="Change Password"
@@ -277,7 +280,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                         <label className="block text-xs font-medium text-slate-600 dark:text-zinc-400 mb-1.5">Current Password</label>
                         <input
                             type="password"
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-[#0c0c0e] text-slate-800 dark:text-zinc-100 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 transition-all duration-200"
+                            className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 transition-all duration-200 ${activeTheme === 'dark' ? 'border-zinc-800 bg-[#0c0c0e] text-zinc-100' : 'border-slate-200 bg-white text-slate-800'}`}
                         />
                     </div>
                     <div>
@@ -286,14 +289,14 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                             type="password"
                             value={newPassword}
                             onChange={(e) => setNewPassword(e.target.value)}
-                            className="w-full px-3 py-2 text-sm rounded-lg border border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-[#0c0c0e] text-slate-800 dark:text-zinc-100 focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 transition-all duration-200"
+                            className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 transition-all duration-200 ${activeTheme === 'dark' ? 'border-zinc-800 bg-[#0c0c0e] text-zinc-100' : 'border-slate-200 bg-white text-slate-800'}`}
                         />
                     </div>
                 </div>
                 <div className="mt-8 flex justify-end gap-3">
                     <button
                         onClick={() => setIsPasswordModalOpen(false)}
-                        className="px-4 py-2 text-sm font-medium rounded-lg text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800/50 transition-colors"
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTheme === 'dark' ? 'text-zinc-400 hover:bg-zinc-800/50' : 'text-slate-600 hover:bg-slate-100'}`}
                     >
                         Cancel
                     </button>
@@ -310,7 +313,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                 }
                             }
                         }}
-                        className="px-4 py-2 text-sm font-medium rounded-lg bg-slate-800 dark:bg-white text-white dark:text-black hover:bg-slate-900 dark:hover:bg-zinc-200 hover:-translate-y-[1px] hover:shadow-md active:translate-y-0 shadow-sm transition-all duration-200"
+                        className="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 dark:bg-white text-white dark:text-black hover:bg-blue-700 dark:hover:bg-zinc-200 hover:-translate-y-[1px] hover:shadow-md active:translate-y-0 shadow-sm transition-all duration-200"
                     >
                         Save Password
                     </button>
@@ -319,6 +322,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
 
             {/* First Delete Modal */}
             <Modal
+                activeTheme={activeTheme}
                 isOpen={isDeleteModalOpen}
                 onClose={() => setIsDeleteModalOpen(false)}
                 title="Account Deletion"
@@ -337,7 +341,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                 <div className="flex justify-end gap-3">
                     <button
                         onClick={() => setIsDeleteModalOpen(false)}
-                        className="px-4 py-2 text-sm font-medium rounded-lg text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800/50 transition-colors"
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTheme === 'dark' ? 'text-zinc-400 hover:bg-zinc-800/50' : 'text-slate-600 hover:bg-slate-100'}`}
                     >
                         Cancel
                     </button>
@@ -355,6 +359,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
 
             {/* Second Delete Modal (Confirmation step) */}
             <Modal
+                activeTheme={activeTheme}
                 isOpen={isDeleteConfirmOpen}
                 onClose={() => setIsDeleteConfirmOpen(false)}
                 title="Final Confirmation"
@@ -366,13 +371,13 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                     <input
                         type="text"
                         placeholder="delete my account"
-                        className="w-full px-3 py-2 text-sm rounded-lg border border-rose-200 dark:border-rose-900/50 bg-white dark:bg-[#0c0c0e] text-slate-800 dark:text-zinc-100 placeholder:text-slate-400 dark:placeholder:text-zinc-600 focus:outline-none focus:border-rose-500/50 focus:ring-2 focus:ring-rose-500/10 transition-all duration-200"
+                        className={`w-full px-3 py-2 text-sm rounded-lg border focus:outline-none focus:border-rose-500/50 focus:ring-2 focus:ring-rose-500/10 transition-all duration-200 ${activeTheme === 'dark' ? 'border-rose-900/50 bg-[#0c0c0e] text-zinc-100 placeholder:text-zinc-600' : 'border-rose-200 bg-white text-slate-800 placeholder:text-slate-400'}`}
                     />
                 </div>
                 <div className="flex justify-end gap-3">
                     <button
                         onClick={() => setIsDeleteConfirmOpen(false)}
-                        className="px-4 py-2 text-sm font-medium rounded-lg text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800/50 transition-colors"
+                        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTheme === 'dark' ? 'text-zinc-400 hover:bg-zinc-800/50' : 'text-slate-600 hover:bg-slate-100'}`}
                     >
                         Cancel
                     </button>
