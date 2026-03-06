@@ -13,8 +13,8 @@ from transformers import ViTImageProcessor, ViTForImageClassification
 # -----------------------------
 
 MODEL_REPO = "SARVM/ViT_Deepfake"
-# HF_TOKEN = os.getenv("HF_TOKEN")  # Set in Space secrets or local env
-HF_TOKEN = "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"  # 🔐 Replace with your actual Hugging Face token
+HF_TOKEN = os.getenv("HF_TOKEN")  # Set in Space secrets or local env
+# HF_TOKEN = "hf_xxxxxxxxxxxxxxxxxxxx"  # Replace with your actual Hugging Face token for ocal testing
 
 print(f"Loading model from {MODEL_REPO}...")
 
