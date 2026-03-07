@@ -12,6 +12,8 @@ import {
    CameraIcon
 } from '@heroicons/react/24/outline';
 import { ModelType } from '../types';
+import { auth } from '../firebase';
+import { syncUser } from '../services/api';
 
 interface EditProfileModalProps {
    isOpen: boolean;
@@ -182,35 +184,54 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
    const [user, setUser] = useState({
-      name: 'Venkata Sai',
-      username: 'venkatasai_foresight',
+      name: auth.currentUser?.displayName || 'Venkata Sai',
+      username: auth.currentUser?.email?.split('@')[0] || 'analyst',
       bio: 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
-      avatar: null
+      avatar: auth.currentUser?.photoURL || null
    });
 
+   useEffect(() => {
+      if (auth.currentUser) {
+         setUser(prev => ({
+            ...prev,
+            name: auth.currentUser?.displayName || prev.name,
+            username: auth.currentUser?.email?.split('@')[0] || prev.username,
+            avatar: auth.currentUser?.photoURL || prev.avatar
+         }));
+      }
+   }, []);
+
    const stats = [
-      { label: 'Total Analyzed', value: '428', icon: MagnifyingGlassIcon },
-      { label: 'Fake Detected', value: '112', icon: XCircleIcon, color: 'text-rose-500' },
-      { label: 'Real Detected', value: '316', icon: CheckCircleIcon, color: 'text-emerald-500' },
-      { label: 'Most Used Model', value: 'Swin-T', icon: FingerPrintIcon },
+      { label: 'Total Analyzed', value: '0', icon: MagnifyingGlassIcon },
+      { label: 'Fake Detected', value: '0', icon: XCircleIcon, color: 'text-rose-500' },
+      { label: 'Real Detected', value: '0', icon: CheckCircleIcon, color: 'text-emerald-500' },
+      { label: 'Most Used Model', value: 'N/A', icon: FingerPrintIcon },
    ];
 
-   const history = [
-      { id: 1, date: 'Feb 28, 2026', name: 'portrait_test_01.jpg', model: ModelType.Swin, result: 'Fake', confidence: 98.4 },
-      { id: 2, date: 'Feb 27, 2026', name: 'profile_face_alt.png', model: ModelType.ViT, result: 'Real', confidence: 99.2 },
-      { id: 3, date: 'Feb 25, 2026', name: 'social_media_scan.webp', model: ModelType.Swin, result: 'Fake', confidence: 87.5 },
-      { id: 4, date: 'Feb 24, 2026', name: 'biometric_input_v2.jpg', model: ModelType.ViT, result: 'Real', confidence: 99.9 },
-      { id: 5, date: 'Feb 20, 2026', name: 'synthetic_gen_test.png', model: ModelType.Swin, result: 'Fake', confidence: 94.1 },
-   ];
+   const history: any[] = []; // In a real app, fetch this from Supabase
 
    const filteredHistory = history.filter(item => {
       if (filter === 'all') return true;
       return item.result.toLowerCase() === filter;
    });
 
-   const handleSaveProfile = (updatedUser: any) => {
-      setUser(updatedUser);
-      setIsEditModalOpen(false);
+   const handleSaveProfile = async (updatedUser: any) => {
+      try {
+         setUser(updatedUser);
+         if (auth.currentUser) {
+            await syncUser({
+               firebase_uid: auth.currentUser.uid,
+               email: auth.currentUser.email,
+               name: updatedUser.name,
+               profile_pic_url: updatedUser.avatar,
+               save_history: true
+            });
+         }
+         setIsEditModalOpen(false);
+      } catch (err) {
+         console.error("Failed to sync profile:", err);
+         alert("Failed to sync profile updates to server.");
+      }
    };
 
    return (

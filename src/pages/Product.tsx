@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { ModelType, DetectionResult } from '../types';
 import { detectDeepfake } from '../services/geminiService';
@@ -12,6 +11,8 @@ import {
   EyeIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
+import { auth } from '../firebase';
+import { saveScanHistory } from '../services/api';
 
 const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const isDark = theme === 'dark';
@@ -65,12 +66,26 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   };
 
   const runDetection = async () => {
-    if (!image) return;
+    if (!image || !fileInfo) return;
 
     setIsDetecting(true);
     try {
       const detectionResult = await detectDeepfake(image, selectedModel);
       setResult(detectionResult);
+
+      // Save to Supabase via Flask Backend
+      if (auth.currentUser) {
+        await saveScanHistory({
+          firebase_uid: auth.currentUser.uid,
+          file_name: fileInfo.name,
+          original_media_url: image, // In production, upload to storage first
+          heatmap_url: detectionResult.attentionMapUrl,
+          result: detectionResult.prediction,
+          confidence: detectionResult.confidence,
+          model_used: selectedModel,
+          explanation: `Analysis using ${selectedModel} protocol.`
+        });
+      }
     } catch (err) {
       console.error(err);
       setError("Model analysis failed. Please try again.");

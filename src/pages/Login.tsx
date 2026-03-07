@@ -6,6 +6,9 @@ import {
   ArrowRightIcon,
   ShieldCheckIcon
 } from '@heroicons/react/24/outline';
+import { auth } from '../firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { syncUser } from '../services/api';
 
 const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ theme, onLogin }) => {
   const navigate = useNavigate();
@@ -13,11 +16,41 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ the
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [isSigningUp, setIsSigningUp] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    onLogin();
-    navigate('/product');
+    setLoading(true);
+    setError(null);
+    try {
+      let userCredential;
+      if (isSigningUp) {
+        userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      } else {
+        userCredential = await signInWithEmailAndPassword(auth, email, password);
+      }
+
+      const user = userCredential.user;
+
+      // Sync with Supabase & Firestore via Flask Backend
+      await syncUser({
+        firebase_uid: user.uid,
+        email: user.email,
+        name: user.displayName || email.split('@')[0],
+        profile_pic_url: user.photoURL,
+        save_history: true
+      });
+
+      onLogin();
+      navigate('/product');
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'Authentication failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -28,10 +61,18 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ the
             <div className="w-6 h-6 border-2 border-white rounded-sm rotate-45" />
           </div>
           <div className="space-y-2">
-            <h2 className="text-2xl font-bold tracking-tight">Welcome to Foresight</h2>
-            <p className={`text-sm ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Sign in to access facial forensics terminal.</p>
+            <h2 className="text-2xl font-bold tracking-tight">{isSigningUp ? 'Create Analyst Account' : 'Welcome to Foresight'}</h2>
+            <p className={`text-sm ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+              {isSigningUp ? 'Register for access to facial forensics terminal.' : 'Sign in to access facial forensics terminal.'}
+            </p>
           </div>
         </div>
+
+        {error && (
+          <div className="mb-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-500 text-xs font-medium">
+            {error}
+          </div>
+        )}
 
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-2">
@@ -52,7 +93,7 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ the
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label className={`text-xs font-semibold uppercase tracking-wider ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Password</label>
-              <button type="button" className="text-xs font-semibold text-blue-600 hover:text-blue-500">Forgot password?</button>
+              {!isSigningUp && <button type="button" className="text-xs font-semibold text-blue-600 hover:text-blue-500">Forgot password?</button>}
             </div>
             <div className="relative group">
               <LockClosedIcon className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${isDark ? 'text-zinc-600 group-focus-within:text-blue-500' : 'text-slate-400 group-focus-within:text-blue-600'}`} />
@@ -67,33 +108,45 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin: () => void }> = ({ the
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
-            <input
-              type="checkbox"
-              id="remember"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-            />
-            <label htmlFor="remember" className={`text-sm ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>Remember me</label>
-          </div>
+          {!isSigningUp && (
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="remember"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
+              <label htmlFor="remember" className={`text-sm ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>Remember me</label>
+            </div>
+          )}
 
           <button
             type="submit"
-            className="w-full py-3.5 bg-blue-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 hover:bg-blue-700 hover:shadow-blue-600/30 flex items-center justify-center space-x-2"
+            disabled={loading}
+            className={`w-full py-3.5 bg-blue-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-blue-600/20 hover:bg-blue-700 hover:shadow-blue-600/30 flex items-center justify-center space-x-2 ${loading ? 'opacity-70 cursor-not-allowed' : ''}`}
           >
-            <span>Sign In</span>
-            <ArrowRightIcon className="w-4 h-4" />
+            {loading ? (
+              <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            ) : (
+              <>
+                <span>{isSigningUp ? 'Initialize Node' : 'Sign In'}</span>
+                <ArrowRightIcon className="w-4 h-4" />
+              </>
+            )}
           </button>
         </form>
 
         <div className="mt-8 pt-6 border-t border-zinc-900/10 flex flex-col items-center space-y-4">
-          <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Don't have an account?</p>
+          <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+            {isSigningUp ? 'Already have credentials?' : "Don't have an account?"}
+          </p>
           <button
             type="button"
+            onClick={() => setIsSigningUp(!isSigningUp)}
             className="text-xs font-bold text-blue-600 uppercase tracking-widest hover:blue-500"
           >
-            Request Access
+            {isSigningUp ? 'Access Terminal' : 'Request Access'}
           </button>
         </div>
       </div>

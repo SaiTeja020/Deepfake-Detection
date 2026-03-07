@@ -5,6 +5,7 @@ __pycache__/
 *.bin
 *.safetensors
 .env
+foresight-2b6ca-firebase-adminsdk-fbsvc-48aa5ab091.json
 
 # Web dev git ignores
 
