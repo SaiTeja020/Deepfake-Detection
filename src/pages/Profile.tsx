@@ -12,8 +12,9 @@ import {
    CameraIcon
 } from '@heroicons/react/24/outline';
 import { ModelType } from '../types';
-import { auth } from '../firebase';
+import { useAuth } from '../context/AuthContext';
 import { syncUser } from '../services/api';
+import { auth } from '../firebase';
 
 interface EditProfileModalProps {
    isOpen: boolean;
@@ -181,25 +182,26 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
 
 const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const isDark = theme === 'dark';
+   const { user: firebaseUser } = useAuth();
    const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
    const [user, setUser] = useState({
-      name: auth.currentUser?.displayName || 'Venkata Sai',
-      username: auth.currentUser?.email?.split('@')[0] || 'analyst',
+      name: 'Venkata Sai',
+      username: 'venkatasai_foresight',
       bio: 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
-      avatar: auth.currentUser?.photoURL || null
+      avatar: null
    });
 
    useEffect(() => {
-      if (auth.currentUser) {
+      if (firebaseUser) {
          setUser(prev => ({
             ...prev,
-            name: auth.currentUser?.displayName || prev.name,
-            username: auth.currentUser?.email?.split('@')[0] || prev.username,
-            avatar: auth.currentUser?.photoURL || prev.avatar
+            name: firebaseUser.displayName || prev.name,
+            username: firebaseUser.email?.split('@')[0] || prev.username,
+            avatar: firebaseUser.photoURL || prev.avatar
          }));
       }
-   }, []);
+   }, [firebaseUser]);
 
    const stats = [
       { label: 'Total Analyzed', value: '0', icon: MagnifyingGlassIcon },
@@ -218,10 +220,10 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const handleSaveProfile = async (updatedUser: any) => {
       try {
          setUser(updatedUser);
-         if (auth.currentUser) {
+         if (firebaseUser) {
             await syncUser({
-               firebase_uid: auth.currentUser.uid,
-               email: auth.currentUser.email,
+               firebase_uid: firebaseUser.uid,
+               email: firebaseUser.email,
                name: updatedUser.name,
                profile_pic_url: updatedUser.avatar,
                save_history: true
@@ -236,9 +238,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
    return (
       <div className="relative min-h-screen pb-20 overflow-x-hidden">
-         {/* Background Motion Elements */}
-         <div className="bg-blob w-[500px] h-[500px] bg-blue-500/20 -top-40 -left-20 animate-float" />
-         <div className="bg-blob w-[400px] h-[400px] bg-indigo-500/10 bottom-20 right-0 animate-float-reverse" />
+         {/* Background elements removed */}
 
          <div className="space-y-24 fade-in relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             {/* User Info Header */}

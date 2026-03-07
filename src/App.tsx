@@ -6,6 +6,10 @@ import Compare from './pages/Compare';
 import Profile from './pages/Profile';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
+import Signup from './pages/Signup';
+import { useAuth } from './context/AuthContext';
+import { auth } from './firebase';
+import { signOut } from 'firebase/auth';
 import {
   HomeIcon,
   BeakerIcon,
@@ -45,6 +49,12 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
 
   return (
     <>
+      <button
+        onClick={() => setMobileOpen(!isMobileOpen)}
+        className={`fixed top-8 right-8 z-50 p-3 rounded-full lg:hidden transition-all border shadow-lg ${isDark ? 'bg-zinc-900 border-zinc-800 text-white/70' : 'bg-white border-slate-200 text-slate-600'}`}
+      >
+        {isMobileOpen ? <XMarkIcon className="w-5 h-5" /> : <Bars3Icon className="w-5 h-5" />}
+      </button>
 
       {isMobileOpen && (
         <div
@@ -66,14 +76,17 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
         `}
       >
         <div className="p-6 flex items-center justify-between border-b border-zinc-900/50">
-          <div className="flex items-center space-x-3">
-            <div className="relative w-9 h-9 flex items-center justify-center">
-              <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
-            </div>
-            {!isCollapsed && (
+          {(!isCollapsed || isMobileOpen) && (
+            <div className="flex items-center space-x-3">
+              <div className="relative group">
+                <div className="absolute -inset-1 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-lg blur opacity-40 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
+                <div className="relative w-9 h-9 flex items-center justify-center">
+                  <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-full h-full object-contain" />
+                </div>
+              </div>
               <span className={`text-xl font-extrabold tracking-tighter heading-font ${isDark ? 'text-white' : 'text-slate-900'}`}>Foresight</span>
-            )}
-          </div>
+            </div>
+          )}
           <button
             onClick={() => setIsCollapsed(!isCollapsed)}
             className={`hidden lg:flex p-1.5 rounded-lg hover:bg-zinc-800/10 transition-colors ${isDark ? 'text-zinc-500 hover:text-white' : 'text-slate-400 hover:text-slate-900'}`}
@@ -92,13 +105,13 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
                 to={item.path}
                 onClick={() => setMobileOpen(false)}
                 className={`
-                    relative flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all group
-                    ${active
+                  relative flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all group
+                  ${active
                     ? (isDark ? 'bg-blue-600/10 text-white shadow-sm' : 'bg-blue-50 text-blue-600')
                     : (isDark ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900/50' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-100')
                   }
-                    ${isCollapsed && !isMobileOpen ? 'justify-center' : ''}
-                  `}
+                  ${isCollapsed && !isMobileOpen ? 'justify-center' : ''}
+                `}
               >
                 <item.icon className={`w-5 h-5 flex-shrink-0 transition-colors ${active ? (isDark ? 'text-blue-500' : 'text-blue-600') : 'group-hover:text-blue-500'}`} />
                 {(!isCollapsed || isMobileOpen) && (
@@ -132,6 +145,7 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
           ) : (
             <Link
               to="/login"
+              onClick={() => setMobileOpen(false)}
               className={`flex items-center space-x-3 px-3 py-2.5 transition-all group rounded-lg ${isCollapsed && !isMobileOpen ? 'justify-center' : ''} ${isDark ? 'text-blue-500 hover:text-blue-400 hover:bg-blue-500/5' : 'text-blue-600 hover:text-blue-700 hover:bg-blue-50 font-medium'}`}
             >
               <UserCircleIcon className="w-5 h-5 flex-shrink-0" />
@@ -139,47 +153,8 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
             </Link>
           )}
         </div>
-      </aside >
+      </aside>
     </>
-  );
-};
-
-const NavHeader = ({ theme, isLoggedIn, isMobileOpen, setMobileOpen }: {
-  theme: 'dark' | 'light',
-  isLoggedIn: boolean,
-  isMobileOpen: boolean,
-  setMobileOpen: (v: boolean) => void
-}) => {
-  const isDark = theme === 'dark';
-  return (
-    <header className={`sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b px-6 md:px-8 backdrop-blur-xl transition-colors duration-500 ${isDark ? 'bg-[#09090b]/80 border-zinc-900/50' : 'bg-white/90 border-slate-200/60'}`}>
-      <div className="flex items-center space-x-3">
-        <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-8 h-8 object-contain" />
-        <span className={`text-lg font-black tracking-tighter heading-font uppercase ${isDark ? 'text-white' : 'text-slate-900'}`}>Foresight</span>
-      </div>
-
-      <div className="flex items-center space-x-4 md:space-x-6">
-        <nav className={`hidden md:flex items-center space-x-6 text-[11px] font-bold uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
-          <Link to="/" className="hover:text-primary transition-colors">Home</Link>
-          <Link to="/product" className="hover:text-primary transition-colors">Analyze</Link>
-          <Link to="/compare" className="hover:text-primary transition-colors">Models</Link>
-        </nav>
-        {!isLoggedIn && (
-          <Link
-            to="/login"
-            className={`px-4 py-1.5 md:px-5 md:py-2 rounded-lg font-bold text-[10px] uppercase tracking-widest transition-all ${isDark ? 'bg-white text-black hover:bg-zinc-200' : 'bg-slate-900 text-white hover:bg-slate-800'}`}
-          >
-            Sign In
-          </Link>
-        )}
-        <button
-          onClick={() => setMobileOpen(!isMobileOpen)}
-          className={`p-2 rounded-lg transition-all border lg:hidden ${isDark ? 'bg-zinc-900 border-zinc-800 text-white/70' : 'bg-white border-slate-200 text-slate-600'}`}
-        >
-          {isMobileOpen ? <XMarkIcon className="w-5 h-5" /> : <Bars3Icon className="w-5 h-5" />}
-        </button>
-      </div>
-    </header>
   );
 };
 
@@ -187,32 +162,81 @@ const App: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [isMobileOpen, setMobileOpen] = useState(false);
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
+  const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
+  const { user, loading } = useAuth();
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-  }, [theme]);
+    const root = document.documentElement;
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
-  const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
-  const handleLogin = () => setIsLoggedIn(true);
-  const handleLogout = () => setIsLoggedIn(false);
+    const applyTheme = (mode: 'dark' | 'light' | 'system') => {
+      let resolvedTheme: 'dark' | 'light' = 'dark';
+      if (mode === 'system') {
+        resolvedTheme = mediaQuery.matches ? 'dark' : 'light';
+      } else {
+        resolvedTheme = mode;
+      }
+
+      setActiveTheme(resolvedTheme);
+      root.setAttribute('data-theme', resolvedTheme);
+    };
+
+    applyTheme(themeMode);
+
+    const listener = (e: MediaQueryListEvent) => {
+      if (themeMode === 'system') {
+        applyTheme('system');
+      }
+    };
+
+    mediaQuery.addEventListener('change', listener);
+    return () => mediaQuery.removeEventListener('change', listener);
+  }, [themeMode]);
+
+  const toggleTheme = () => {
+    setThemeMode(prev => {
+      if (prev === 'dark') return 'light';
+      if (prev === 'light') return 'system';
+      return 'dark'; // system -> dark
+    });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error("Logout failed", error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${activeTheme === 'dark' ? 'bg-[#09090b]' : 'bg-[#fafafa]'}`}>
+        <div className="flex flex-col items-center space-y-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+          <p className={`text-sm font-medium tracking-widest uppercase opacity-50 ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Initializing Terminal</p>
+        </div>
+      </div>
+    );
+  }
 
   const sidebarCollapsed = isCollapsed && !isHovered;
 
   return (
     <Router>
-      <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${theme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#fafafa] text-[#0f172a]'}`}>
+      <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${activeTheme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#fafafa] text-[#0f172a]'}`}>
         <main className={`flex-1 transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
-          <NavHeader theme={theme} isLoggedIn={isLoggedIn} isMobileOpen={isMobileOpen} setMobileOpen={setMobileOpen} />
-          <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pt-8 lg:pb-0">
+          <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pb-0">
             <Routes>
-              <Route path="/" element={<Landing theme={theme} isLoggedIn={isLoggedIn} />} />
-              <Route path="/login" element={!isLoggedIn ? <Login theme={theme} onLogin={handleLogin} /> : <Navigate to="/product" />} />
-              <Route path="/product" element={isLoggedIn ? <Product theme={theme} /> : <Navigate to="/login" />} />
-              <Route path="/compare" element={isLoggedIn ? <Compare theme={theme} /> : <Navigate to="/login" />} />
-              <Route path="/profile" element={isLoggedIn ? <Profile theme={theme} /> : <Navigate to="/login" />} />
-              <Route path="/settings" element={isLoggedIn ? <Settings theme={theme} toggleTheme={toggleTheme} /> : <Navigate to="/login" />} />
+              <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={!!user} />} />
+              <Route path="/login" element={!user ? <Login theme={activeTheme} /> : <Navigate to="/product" />} />
+              <Route path="/signup" element={!user ? <Signup theme={activeTheme} /> : <Navigate to="/product" />} />
+              <Route path="/product" element={user ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
+              <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
+              <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
+              {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
+              <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
             </Routes>
           </div>
         </main>
@@ -225,9 +249,9 @@ const App: React.FC = () => {
             setIsCollapsed={setIsCollapsed}
             isMobileOpen={isMobileOpen}
             setMobileOpen={setMobileOpen}
-            theme={theme}
+            theme={activeTheme}
             toggleTheme={toggleTheme}
-            isLoggedIn={isLoggedIn}
+            isLoggedIn={!!user}
             onLogout={handleLogout}
           />
         </div>
