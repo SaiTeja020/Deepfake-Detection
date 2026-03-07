@@ -24,16 +24,6 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
     setError(null);
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      // Sync with Supabase & Firestore via Flask Backend
-      await syncUser({
-        firebase_uid: user.uid,
-        email: user.email,
-        name: user.displayName || email.split('@')[0],
-        profile_pic_url: user.photoURL,
-        save_history: true
-      });
 
       if (onLogin) onLogin();
       navigate('/product');

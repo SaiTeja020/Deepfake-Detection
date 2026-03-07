@@ -13,7 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ModelType } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { syncUser } from '../services/api';
+import { syncUser, uploadProfilePic, getUserProfile } from '../services/api';
 import { auth } from '../firebase';
 
 interface EditProfileModalProps {
@@ -182,7 +182,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
 
 const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const isDark = theme === 'dark';
-   const { user: firebaseUser } = useAuth();
+   const { user: firebaseUser, profile, refreshProfile } = useAuth();
    const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
    const [user, setUser] = useState({
@@ -193,15 +193,15 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    });
 
    useEffect(() => {
-      if (firebaseUser) {
-         setUser(prev => ({
-            ...prev,
-            name: firebaseUser.displayName || prev.name,
-            username: firebaseUser.email?.split('@')[0] || prev.username,
-            avatar: firebaseUser.photoURL || prev.avatar
-         }));
+      if (profile) {
+         setUser({
+            name: profile.name || firebaseUser?.displayName || 'Venkata Sai',
+            username: profile.email?.split('@')[0] || firebaseUser?.email?.split('@')[0] || 'venkatasai_foresight',
+            bio: profile.bio || 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
+            avatar: profile.profile_pic_url || firebaseUser?.photoURL || null
+         });
       }
-   }, [firebaseUser]);
+   }, [profile, firebaseUser]);
 
    const stats = [
       { label: 'Total Analyzed', value: '0', icon: MagnifyingGlassIcon },
@@ -219,20 +219,32 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
    const handleSaveProfile = async (updatedUser: any) => {
       try {
-         setUser(updatedUser);
+         let finalAvatarUrl = updatedUser.avatar;
+
          if (firebaseUser) {
+            // If the avatar is a base64 string (newly uploaded), upload to Supabase Storage first
+            if (updatedUser.avatar && updatedUser.avatar.startsWith('data:image')) {
+               const uploadRes = await uploadProfilePic(firebaseUser.uid, updatedUser.avatar);
+               finalAvatarUrl = uploadRes.url;
+            }
+
             await syncUser({
                firebase_uid: firebaseUser.uid,
                email: firebaseUser.email,
                name: updatedUser.name,
-               profile_pic_url: updatedUser.avatar,
+               profile_pic_url: finalAvatarUrl,
+               bio: updatedUser.bio,
                save_history: true
             });
+
+            // Refresh global profile state
+            await refreshProfile();
          }
+
          setIsEditModalOpen(false);
       } catch (err) {
          console.error("Failed to sync profile:", err);
-         alert("Failed to sync profile updates to server.");
+         alert("Failed to update profile picture or sync updates.");
       }
    };
 

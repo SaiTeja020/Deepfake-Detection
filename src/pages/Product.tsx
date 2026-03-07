@@ -12,7 +12,7 @@ import {
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import { auth } from '../firebase';
-import { saveScanHistory } from '../services/api';
+import { saveScanHistory, uploadScanMedia } from '../services/api';
 
 const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const isDark = theme === 'dark';
@@ -73,13 +73,20 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       const detectionResult = await detectDeepfake(image, selectedModel);
       setResult(detectionResult);
 
-      // Save to Supabase via Flask Backend
+      // Upload media to Supabase Storage before saving history
       if (auth.currentUser) {
+        const uploadRes = await uploadScanMedia(
+          auth.currentUser.uid,
+          image,
+          detectionResult.attentionMapUrl
+        );
+
+        // Save to Supabase via Flask Backend
         await saveScanHistory({
           firebase_uid: auth.currentUser.uid,
           file_name: fileInfo.name,
-          original_media_url: image, // In production, upload to storage first
-          heatmap_url: detectionResult.attentionMapUrl,
+          original_media_url: uploadRes.original_url || image,
+          heatmap_url: uploadRes.heatmap_url || detectionResult.attentionMapUrl,
           result: detectionResult.prediction,
           confidence: detectionResult.confidence,
           model_used: selectedModel,

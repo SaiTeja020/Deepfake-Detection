@@ -5,6 +5,9 @@ from supabase import create_client, Client
 import firebase_admin
 from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
+import base64
+import uuid
+import re
 
 load_dotenv()
 
@@ -33,6 +36,7 @@ def sync_user():
     email = data.get('email')
     name = data.get('name')
     profile_pic_url = data.get('profile_pic_url')
+    bio = data.get('bio')
     save_history = data.get('save_history', True)
 
     if not firebase_uid or not email:
@@ -45,6 +49,7 @@ def sync_user():
             "email": email,
             "name": name,
             "profile_pic_url": profile_pic_url,
+            "bio": bio,
             "save_history": save_history
         }
         
@@ -52,6 +57,12 @@ def sync_user():
         existing_user = supabase.table("users").select("*").eq("firebase_uid", firebase_uid).execute()
         
         if existing_user.data:
+            # If incoming values are null, preserve the existing ones
+            if not profile_pic_url:
+                user_data["profile_pic_url"] = existing_user.data[0].get("profile_pic_url")
+            if not bio:
+                user_data["bio"] = existing_user.data[0].get("bio")
+            
             supabase.table("users").update(user_data).eq("firebase_uid", firebase_uid).execute()
         else:
             supabase.table("users").insert(user_data).execute()
@@ -64,6 +75,91 @@ def sync_user():
         return jsonify({"message": "User synced successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/users/<firebase_uid>', methods=['GET'])
+def get_user(firebase_uid):
+    try:
+        res = supabase.table("users").select("*").eq("firebase_uid", firebase_uid).execute()
+        if res.data:
+            return jsonify(res.data[0]), 200
+        return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def upload_to_supabase(base64_str, bucket, folder=""):
+    """Helper to upload base64 image to Supabase Storage"""
+    try:
+        if not base64_str or not base64_str.startswith("data:image"):
+            return None, "Invalid image data"
+            
+        # Extract format and data
+        match = re.search(r'data:image/(\w+);base64,(.*)', base64_str)
+        if not match:
+            return None, "Malformed base64 string"
+        
+        ext = match.group(1)
+        try:
+            img_data = base64.b64decode(match.group(2))
+        except Exception as e:
+            return None, f"Base64 decode error: {str(e)}"
+        
+        file_name = f"{folder}/{uuid.uuid4()}.{ext}" if folder else f"{uuid.uuid4()}.{ext}"
+        
+        # Upload to Supabase Storage
+        try:
+            res = supabase.storage.from_(bucket).upload(file_name, img_data, {"content-type": f"image/{ext}"})
+        except Exception as e:
+            return None, f"Supabase Storage Upload Error: {str(e)}"
+        
+        # Get Public URL
+        try:
+            public_url = supabase.storage.from_(bucket).get_public_url(file_name)
+            return public_url, None
+        except Exception as e:
+            return None, f"Supabase Public URL Error: {str(e)}"
+    except Exception as e:
+        return None, f"Unexpected error: {str(e)}"
+
+@app.route('/api/upload/profile-pic', methods=['POST'])
+def upload_profile_pic():
+    data = request.json
+    base64_image = data.get('image')
+    firebase_uid = data.get('firebase_uid')
+    
+    if not base64_image or not firebase_uid:
+        return jsonify({"error": "Missing image or uid"}), 400
+        
+    url, error = upload_to_supabase(base64_image, "profile-pictures", folder=firebase_uid)
+    if url:
+        return jsonify({"url": url}), 200
+    return jsonify({"error": error or "Upload failed"}), 500
+
+@app.route('/api/upload/scan', methods=['POST'])
+def upload_scan_media():
+    data = request.json
+    original_image = data.get('original_image')
+    heatmap_image = data.get('heatmap_image')
+    firebase_uid = data.get('firebase_uid')
+    
+    if not firebase_uid:
+        return jsonify({"error": "Missing uid"}), 400
+        
+    res = {}
+    errors = []
+    if original_image:
+        url, error = upload_to_supabase(original_image, "user-uploads", folder=firebase_uid)
+        if url: res['original_url'] = url
+        else: errors.append(f"Original upload failed: {error}")
+        
+    if heatmap_image:
+        url, error = upload_to_supabase(heatmap_image, "heatmaps", folder=firebase_uid)
+        if url: res['heatmap_url'] = url
+        else: errors.append(f"Heatmap upload failed: {error}")
+        
+    if errors and not res:
+        return jsonify({"error": "; ".join(errors)}), 500
+        
+    return jsonify(res), 200
 
 @app.route('/api/scans/save', methods=['POST'])
 def save_scan():

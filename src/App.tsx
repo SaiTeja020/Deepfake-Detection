@@ -25,7 +25,7 @@ import {
   MoonIcon
 } from '@heroicons/react/24/outline';
 
-const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn }: {
+const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn, profile }: {
   isCollapsed: boolean,
   setIsCollapsed: (v: boolean) => void,
   isMobileOpen: boolean,
@@ -33,7 +33,8 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
   theme: 'dark' | 'light',
   toggleTheme: () => void,
   onLogout: () => void,
-  isLoggedIn: boolean
+  isLoggedIn: boolean,
+  profile: any
 }) => {
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
@@ -135,13 +136,26 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
           </button>
 
           {isLoggedIn ? (
-            <button
-              onClick={onLogout}
-              className={`w-full flex items-center space-x-3 px-3 py-2.5 transition-all group rounded-lg ${isCollapsed && !isMobileOpen ? 'justify-center' : ''} ${isDark ? 'text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5' : 'text-slate-500 hover:text-rose-600 hover:bg-rose-50'}`}
-            >
-              <ArrowLeftOnRectangleIcon className="w-5 h-5 flex-shrink-0" />
-              {(!isCollapsed || isMobileOpen) && <span className="text-[14px] font-medium">Logout</span>}
-            </button>
+            <div className="space-y-1">
+              <Link
+                to="/profile"
+                className={`w-full flex items-center space-x-3 px-3 py-2.5 transition-all group rounded-lg ${isCollapsed && !isMobileOpen ? 'justify-center' : ''} ${isDark ? 'text-zinc-500 hover:text-zinc-200 hover:bg-zinc-900/50' : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'}`}
+              >
+                {profile?.profile_pic_url ? (
+                  <img src={profile.profile_pic_url} alt="Avatar" className="w-5 h-5 rounded-full object-cover border border-blue-500/20" />
+                ) : (
+                  <UserCircleIcon className="w-5 h-5 flex-shrink-0" />
+                )}
+                {(!isCollapsed || isMobileOpen) && <span className="text-[14px] font-medium truncate">{profile?.name || 'Profile'}</span>}
+              </Link>
+              <button
+                onClick={onLogout}
+                className={`w-full flex items-center space-x-3 px-3 py-2.5 transition-all group rounded-lg ${isCollapsed && !isMobileOpen ? 'justify-center' : ''} ${isDark ? 'text-zinc-500 hover:text-rose-400 hover:bg-rose-500/5' : 'text-slate-500 hover:text-rose-600 hover:bg-rose-50'}`}
+              >
+                <ArrowLeftOnRectangleIcon className="w-5 h-5 flex-shrink-0" />
+                {(!isCollapsed || isMobileOpen) && <span className="text-[14px] font-medium">Logout</span>}
+              </button>
+            </div>
           ) : (
             <Link
               to="/login"
@@ -164,7 +178,7 @@ const App: React.FC = () => {
   const [isMobileOpen, setMobileOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
   const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
 
   useEffect(() => {
     const root = document.documentElement;
@@ -253,6 +267,7 @@ const App: React.FC = () => {
             toggleTheme={toggleTheme}
             isLoggedIn={!!user}
             onLogout={handleLogout}
+            profile={profile}
           />
         </div>
       </div>

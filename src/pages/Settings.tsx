@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
     KeyIcon,
@@ -64,10 +64,16 @@ const Modal = ({
 
 const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => {
     const navigate = useNavigate();
-    const { user } = useAuth();
+    const { user: firebaseUser, profile } = useAuth();
     // Toggles state
-    const [saveImages, setSaveImages] = useState(false);
+    const [saveImages, setSaveImages] = useState(profile?.save_history ?? false);
     const [allowData, setAllowData] = useState(true);
+
+    useEffect(() => {
+        if (profile) {
+            setSaveImages(profile.save_history);
+        }
+    }, [profile]);
 
     const [newPassword, setNewPassword] = useState('');
 
@@ -103,7 +109,7 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                                     <input
                                         type="email"
                                         id="email"
-                                        defaultValue={user?.email || "admin@foresight.io"}
+                                        defaultValue={profile?.email || firebaseUser?.email || "admin@foresight.io"}
                                         readOnly
                                         className={`w-full sm:w-64 px-3 py-2 text-sm rounded-lg border cursor-not-allowed focus:outline-none transition-all duration-200 ease-in-out ${activeTheme === 'dark' ? 'border-blue-900 bg-blue-950/40 text-blue-400' : 'border-blue-200 bg-blue-50 text-blue-800'}`}
                                     />
@@ -302,9 +308,9 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                     </button>
                     <button
                         onClick={async () => {
-                            if (user && newPassword) {
+                            if (firebaseUser && newPassword) {
                                 try {
-                                    await updatePassword(user, newPassword);
+                                    await updatePassword(firebaseUser, newPassword);
                                     alert('Password updated successfully');
                                     setIsPasswordModalOpen(false);
                                     setNewPassword('');
@@ -383,9 +389,9 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                     </button>
                     <button
                         onClick={async () => {
-                            if (user) {
+                            if (firebaseUser) {
                                 try {
-                                    await deleteUser(user);
+                                    await deleteUser(firebaseUser);
                                     alert('Account deleted forever.');
                                     setIsDeleteConfirmOpen(false);
                                 } catch (error: any) {
