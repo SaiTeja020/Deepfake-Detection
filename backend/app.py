@@ -74,7 +74,11 @@ def sync_user():
 
         return jsonify({"message": "User synced successfully"}), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        error_msg = str(e)
+        if "Could not find the 'bio' column" in error_msg:
+            return jsonify({"error": "Supabase 'users' table is missing the 'bio' column. Please run: ALTER TABLE users ADD COLUMN bio TEXT;"}), 500
+        return jsonify({"error": error_msg}), 500
+
 
 @app.route('/api/users/<firebase_uid>', methods=['GET'])
 def get_user(firebase_uid):
