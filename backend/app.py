@@ -32,52 +32,35 @@ else:
 @app.route('/api/users/sync', methods=['POST'])
 def sync_user():
     data = request.json
-    firebase_uid = data.get('firebase_uid')
-    email = data.get('email')
-    name = data.get('name')
-    profile_pic_url = data.get('profile_pic_url')
-    bio = data.get('bio')
-    save_history = data.get('save_history', True)
 
-    if not firebase_uid or not email:
+    user_data = {
+        "firebase_uid": data.get("firebase_uid"),
+        "email": data.get("email"),
+        "name": data.get("name"),
+        "profile_pic_url": data.get("profile_pic_url"),
+        "bio": data.get("bio"),
+        "save_history": data.get("save_history", True)
+    }
+
+    if not user_data["firebase_uid"] or not user_data["email"]:
         return jsonify({"error": "Missing required fields"}), 400
 
     try:
-        # Sync to Supabase
-        user_data = {
-            "firebase_uid": firebase_uid,
-            "email": email,
-            "name": name,
-            "profile_pic_url": profile_pic_url,
-            "bio": bio,
-            "save_history": save_history
-        }
-        
-        # Check if user exists in Supabase
-        existing_user = supabase.table("users").select("*").eq("firebase_uid", firebase_uid).execute()
-        
-        if existing_user.data:
-            # If incoming values are null, preserve the existing ones
-            if not profile_pic_url:
-                user_data["profile_pic_url"] = existing_user.data[0].get("profile_pic_url")
-            if not bio:
-                user_data["bio"] = existing_user.data[0].get("bio")
-            
-            supabase.table("users").update(user_data).eq("firebase_uid", firebase_uid).execute()
-        else:
-            supabase.table("users").insert(user_data).execute()
+        # remove None values
+        user_data = {k: v for k, v in user_data.items() if v is not None}
 
-        # Sync to Firestore
+        supabase.table("users").upsert(
+            user_data,
+            on_conflict="firebase_uid"
+        ).execute()
+
         if db:
-            user_ref = db.collection('users').document(firebase_uid)
-            user_ref.set(user_data, merge=True)
+            db.collection("users").document(user_data["firebase_uid"]).set(user_data, merge=True)
 
         return jsonify({"message": "User synced successfully"}), 200
+
     except Exception as e:
-        error_msg = str(e)
-        if "Could not find the 'bio' column" in error_msg:
-            return jsonify({"error": "Supabase 'users' table is missing the 'bio' column. Please run: ALTER TABLE users ADD COLUMN bio TEXT;"}), 500
-        return jsonify({"error": error_msg}), 500
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/users/<firebase_uid>', methods=['GET'])
@@ -135,6 +118,13 @@ def upload_profile_pic():
         
     url, error = upload_to_supabase(base64_image, "profile-pictures", folder=firebase_uid)
     if url:
+        try:
+            # Also update the user's profile_pic_url in the database directly
+            supabase.table("users").update({"profile_pic_url": url}).eq("firebase_uid", firebase_uid).execute()
+        except Exception as e:
+            print(f"Failed to update user profile_pic_url in db: {e}")
+            pass
+            
         return jsonify({"url": url}), 200
     return jsonify({"error": error or "Upload failed"}), 500
 
