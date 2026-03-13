@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { ModelType, DetectionResult } from '../types';
-import { detectDeepfake } from '../services/geminiService';
+import { detectDeepfake } from '../services/api';
+import { auth } from '../firebase';
 import {
   CloudArrowUpIcon,
   ArrowPathIcon,
@@ -56,9 +57,10 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
     if (!image) return;
     setIsDetecting(true);
     try {
+      const uid = auth.currentUser?.uid || 'guest';
       const [vitRes, swinRes] = await Promise.all([
-        detectDeepfake(image, ModelType.ViT),
-        detectDeepfake(image, ModelType.Swin)
+        detectDeepfake(uid, image, ModelType.ViT),
+        detectDeepfake(uid, image, ModelType.Swin)
       ]);
       setVitResult(vitRes);
       setSwinResult(swinRes);

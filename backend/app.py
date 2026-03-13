@@ -18,6 +18,8 @@ import torchvision.transforms as transforms
 
 load_dotenv()
 
+from llm_adapter import llm_service
+
 app = Flask(__name__)
 CORS(app)
 
@@ -357,11 +359,18 @@ def detect_deepfake():
         # Upload Heatmap to Supabase
         heatmap_url, h_error = upload_to_supabase(overlay_data_uri, "heatmaps", folder=firebase_uid)
         
+        final_prediction = label.capitalize()
+        conf_pct = round(confidence.item() * 100, 2)
+        
+        # Connect to LLM Adapter Layer
+        explanation = llm_service.get_explanation(final_prediction, conf_pct, "ViT Transformer")
+        
         return jsonify({
-            "prediction": label.capitalize(),
-            "confidence": round(confidence.item() * 100, 2),
+            "prediction": final_prediction,
+            "confidence": conf_pct,
             "inferenceTime": inference_time,
-            "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400"
+            "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400",
+            "explanation": explanation
         }), 200
         
     except Exception as e:

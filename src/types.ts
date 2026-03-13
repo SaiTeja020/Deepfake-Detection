@@ -9,6 +9,7 @@ export interface DetectionResult {
   confidence: number;
   inferenceTime: number;
   attentionMapUrl: string;
+  explanation?: string;
 }
 
 export interface ModelMetrics {

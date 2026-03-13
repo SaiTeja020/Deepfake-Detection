@@ -90,7 +90,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
           result: detectionResult.prediction,
           confidence: detectionResult.confidence,
           model_used: selectedModel,
-          explanation: `Analysis using ${selectedModel} protocol.`
+          explanation: detectionResult.explanation || `Analysis using ${selectedModel} protocol.`
         });
       }
     } catch (err) {
