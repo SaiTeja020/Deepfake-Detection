@@ -25,6 +25,7 @@ The model was trained on a deepfake image dataset sourced from Kaggle.
 🔗 **Kaggle Dataset Link:**  
 > _(https://www.kaggle.com/datasets/manjilkarki/deepfake-and-real-images/suggestions)_
 > _(https://kaggle.com/datasets/39a1b2d75d3b5a9510caf29a9be7e94552288f6f45e8092bcf004111979a3870)_
+>_(https://kaggle.com/datasets/3979eace240471bf0b7feabe5baa15fbf1bd9a4d6dd97248b0257ae473bf94b6)_
 
 ### Expected Dataset Structure
 
