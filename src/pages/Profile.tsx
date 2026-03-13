@@ -13,7 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { ModelType } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { syncUser, uploadProfilePic, getUserProfile } from '../services/api';
+import { syncUser, uploadProfilePic, getUserProfile, getScanHistory, clearScanHistory } from '../services/api';
 import { auth } from '../firebase';
 
 interface EditProfileModalProps {
@@ -186,8 +186,8 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
    const [user, setUser] = useState({
-      name: 'Venkata Sai',
-      username: 'venkatasai_foresight',
+      name: 'John Doe',
+      username: 'johndoe_foresight',
       bio: 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
       avatar: null
    });
@@ -203,19 +203,60 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       }
    }, [profile, firebaseUser]);
 
-   const stats = [
-      { label: 'Total Analyzed', value: '0', icon: MagnifyingGlassIcon },
-      { label: 'Fake Detected', value: '0', icon: XCircleIcon, color: 'text-rose-500' },
-      { label: 'Real Detected', value: '0', icon: CheckCircleIcon, color: 'text-emerald-500' },
-      { label: 'Most Used Model', value: 'N/A', icon: FingerPrintIcon },
-   ];
+   const [history, setHistory] = useState<any[]>([]);
 
-   const history: any[] = []; // In a real app, fetch this from Supabase
+   useEffect(() => {
+      const fetchHistory = async () => {
+         if (firebaseUser?.uid) {
+            try {
+               const data = await getScanHistory(firebaseUser.uid);
+               if (Array.isArray(data)) {
+                  // Format data to match table structure
+                  // Assuming backend columns: id, file_name, result, confidence, model_used, created_at
+                  const formatted = data.map(item => ({
+                     id: item.id,
+                     date: new Date(item.created_at).toLocaleDateString(),
+                     name: item.file_name || 'Unknown',
+                     model: item.model_used || 'UNKNOWN',
+                     result: item.result || 'Unknown',
+                     confidence: item.confidence || 0
+                  }));
+                  setHistory(formatted);
+               }
+            } catch (err) {
+               console.error("Failed to load history:", err);
+            }
+         }
+      };
+      fetchHistory();
+   }, [firebaseUser]);
 
    const filteredHistory = history.filter(item => {
       if (filter === 'all') return true;
       return item.result.toLowerCase() === filter;
    });
+
+   // Calculate real stats based on history
+   const totalAnalyzed = history.length;
+   const fakeDetected = history.filter(i => i.result === 'Fake' || i.result === 'FAKE').length;
+   const realDetected = history.filter(i => i.result === 'Real' || i.result === 'REAL').length;
+
+   const modelsCount = history.reduce((acc, curr) => {
+       acc[curr.model] = (acc[curr.model] || 0) + 1;
+       return acc;
+   }, {} as Record<string, number>);
+   
+   let mostUsedModel = 'N/A';
+   if (Object.keys(modelsCount).length > 0) {
+       mostUsedModel = Object.keys(modelsCount).reduce((a, b) => modelsCount[a] > modelsCount[b] ? a : b);
+   }
+
+   const stats = [
+      { label: 'Total Analyzed', value: totalAnalyzed.toString(), icon: MagnifyingGlassIcon },
+      { label: 'Fake Detected', value: fakeDetected.toString(), icon: XCircleIcon, color: 'text-rose-500' },
+      { label: 'Real Detected', value: realDetected.toString(), icon: CheckCircleIcon, color: 'text-emerald-500' },
+      { label: 'Most Used Model', value: mostUsedModel, icon: FingerPrintIcon },
+   ];
 
    const handleSaveProfile = async (updatedUser: any) => {
       try {
@@ -245,6 +286,19 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       } catch (err) {
          console.error("Failed to sync profile:", err);
          alert("Failed to update profile picture or sync updates.");
+      }
+   };
+
+   const handleClearHistory = async () => {
+      if (!firebaseUser) return;
+      if (window.confirm("Are you sure you want to clear your detection history? This action cannot be undone.")) {
+         try {
+            await clearScanHistory(firebaseUser.uid);
+            setHistory([]);
+         } catch (error) {
+            console.error("Failed to clear history", error);
+            alert("Failed to clear history. Please try again.");
+         }
       }
    };
 
@@ -325,6 +379,12 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   </div>
 
                   <div className="flex items-center gap-4 ml-8">
+                     <button
+                        onClick={handleClearHistory}
+                        className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all duration-300 ${isDark ? 'border-zinc-800 text-rose-500 hover:bg-rose-500 hover:text-white hover:border-rose-500' : 'border-slate-200 text-rose-500 hover:bg-rose-500 hover:text-white hover:border-rose-500'}`}
+                     >
+                        Clear History
+                     </button>
                      <div className={`inline-flex p-1.5 rounded-full border ${isDark ? 'bg-zinc-950/50 border-zinc-900' : 'bg-slate-50 border-slate-200 shadow-sm'}`}>
                         {(['all', 'real', 'fake'] as const).map((opt) => (
                            <button
@@ -362,7 +422,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                     </span>
                                  </td>
                                  <td>
-                                    <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all group-hover:scale-105 ${row.result === 'Fake' ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                    <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all group-hover:scale-105 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
                                        {row.result}
                                     </div>
                                  </td>
@@ -371,7 +431,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                        <span className="font-mono font-bold text-sm tracking-tighter">{row.confidence}%</span>
                                        <div className={`h-1.5 w-24 rounded-full overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-slate-100'}`}>
                                           <div
-                                             className={`h-full rounded-full transition-all duration-1000 ${row.result === 'Fake' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'}`}
+                                             className={`h-full rounded-full transition-all duration-1000 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'}`}
                                              style={{ width: `${row.confidence}%` }}
                                           />
                                        </div>

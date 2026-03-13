@@ -73,3 +73,37 @@ export const getUserProfile = async (firebase_uid: string) => {
         throw error;
     }
 };
+
+export const detectDeepfake = async (firebase_uid: string, base64Image: string, modelType: string) => {
+    try {
+        const response = await axios.post(`${API_BASE_URL}/detect`, {
+            firebase_uid,
+            image: base64Image,
+            model_type: modelType
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error in deepfake detection:', error);
+        throw error;
+    }
+};
+
+export const getScanHistory = async (firebase_uid: string) => {
+    try {
+        const response = await axios.get(`${API_BASE_URL}/scans/history/${firebase_uid}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error fetching scan history:', error);
+        throw error;
+    }
+};
+
+export const clearScanHistory = async (firebase_uid: string) => {
+    try {
+        const response = await axios.delete(`${API_BASE_URL}/scans/history/${firebase_uid}`);
+        return response.data;
+    } catch (error) {
+        console.error('Error clearing scan history:', error);
+        throw error;
+    }
+};

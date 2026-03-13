@@ -43,13 +43,13 @@ model.eval()
 
 # Override labels to REAL / FAKE
 model.config.id2label = {
-    1: "REAL",
-    0: "FAKE"
+    0: "FAKE",
+    1: "REAL"
 }
 
 model.config.label2id = {
-    "REAL": 1,
-    "FAKE": 0
+    "FAKE": 0,
+    "REAL": 1
 }
 
 # -----------------------------
@@ -60,7 +60,7 @@ def compute_attention_rollout(attentions):
     att_mat = torch.stack(attentions).squeeze(1)
     att_mat = att_mat.mean(dim=1)
 
-    residual_att = torch.eye(att_mat.size(-1))
+    residual_att = torch.eye(att_mat.size(-1)).to(att_mat.device)
     aug_att_mat = att_mat + residual_att
     aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1).unsqueeze(-1)
 

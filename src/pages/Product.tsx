@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ModelType, DetectionResult } from '../types';
-import { detectDeepfake } from '../services/geminiService';
+import { detectDeepfake } from '../services/api';
 import {
   CloudArrowUpIcon,
   ArrowPathIcon,
@@ -70,7 +70,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
     setIsDetecting(true);
     try {
-      const detectionResult = await detectDeepfake(image, selectedModel);
+      const detectionResult = await detectDeepfake(auth.currentUser?.uid || 'guest', image, selectedModel);
       setResult(detectionResult);
 
       // Upload media to Supabase Storage before saving history

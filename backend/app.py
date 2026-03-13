@@ -8,6 +8,13 @@ from dotenv import load_dotenv
 import base64
 import uuid
 import re
+import io
+import torch
+import numpy as np
+import cv2
+from transformers import ViTImageProcessor, ViTForImageClassification
+from PIL import Image
+import torchvision.transforms as transforms
 
 load_dotenv()
 
@@ -28,6 +35,67 @@ if firebase_creds_path and os.path.exists(firebase_creds_path):
 else:
     print("Warning: Firebase service account path not found or invalid.")
     db = None
+
+# Deepfake Model Configuration
+MODEL_NAME = "SARVM/ViT_Deepfake"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+model = None
+processor = None
+transform = None
+
+def compute_attention_rollout(attentions):
+    """Refined attention rollout calculation from Gradio reference"""
+    att_mat = torch.stack(attentions).squeeze(1)
+    att_mat = att_mat.mean(dim=1)
+
+    residual_att = torch.eye(att_mat.size(-1)).to(att_mat.device)
+    aug_att_mat = att_mat + residual_att
+    aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1).unsqueeze(-1)
+
+    joint_attentions = torch.zeros_like(aug_att_mat)
+    joint_attentions[0] = aug_att_mat[0]
+
+    for n in range(1, aug_att_mat.size(0)):
+        joint_attentions[n] = aug_att_mat[n] @ joint_attentions[n - 1]
+
+    return joint_attentions[-1]
+
+def get_model():
+    global model, processor, transform
+    if model is None:
+        try:
+            hf_token = os.getenv("HF_TOKEN")
+            print(f"Loading model {MODEL_NAME} to {DEVICE}...")
+            
+            processor = ViTImageProcessor.from_pretrained(
+                MODEL_NAME,
+                token=hf_token
+            )
+            
+            model = ViTForImageClassification.from_pretrained(
+                MODEL_NAME,
+                token=hf_token,
+                output_attentions=True
+            )
+            
+            # Label Correction: SARVM model uses 0:FAKE, 1:REAL
+            model.config.id2label = {0: "FAKE", 1: "REAL"}
+            model.config.label2id = {"FAKE": 0, "REAL": 1}
+            
+            model.to(DEVICE)
+            model.eval()
+            
+            # Transform as fallback if processor is not used directly
+            transform = transforms.Compose([
+                transforms.Resize((224, 224)),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+            print("Deepfake model and processor initialized successfully.")
+        except Exception as e:
+            print(f"CRITICAL: Failed to load model: {e}")
+    return model, processor, transform
 
 @app.route('/api/users/sync', methods=['POST'])
 def sync_user():
@@ -189,6 +257,115 @@ def save_scan():
         supabase.table("scan_history").insert(scan_data).execute()
         return jsonify({"message": "Scan history saved successfully"}), 200
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scans/history/<firebase_uid>', methods=['GET', 'DELETE'])
+def handle_scan_history(firebase_uid):
+    try:
+        if request.method == 'GET':
+            # First get internal user id
+            user_query = supabase.table("users").select("id").eq("firebase_uid", firebase_uid).execute()
+            if not user_query.data:
+                return jsonify([]), 200
+            
+            user_id = user_query.data[0]['id']
+            # Fallback to order by id desc if available
+            history_query = supabase.table("scan_history").select("*").eq("user_id", user_id).execute()
+            
+            return jsonify(history_query.data), 200
+            
+        elif request.method == 'DELETE':
+            user_query = supabase.table("users").select("id").eq("firebase_uid", firebase_uid).execute()
+            if not user_query.data:
+                return jsonify({"error": "User not found"}), 404
+            
+            user_id = user_query.data[0]['id']
+            supabase.table("scan_history").delete().eq("user_id", user_id).execute()
+            
+            return jsonify({"message": "History cleared successfully"}), 200
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/detect', methods=['POST'])
+def detect_deepfake():
+    data = request.json
+    base64_image = data.get('image')
+    firebase_uid = data.get('firebase_uid', 'guest')
+    
+    if not base64_image:
+        return jsonify({"error": "Missing image data"}), 400
+        
+    try:
+        # Load model lazily
+        m, p, t = get_model()
+        if m is None:
+            return jsonify({"error": "Deepfake model is not loaded on server."}), 503
+            
+        # Decode base64
+        if ',' in base64_image:
+            image_content = base64_image.split(',')[1]
+        else:
+            image_content = base64_image
+            
+        img_data = base64.b64decode(image_content)
+        image = Image.open(io.BytesIO(img_data)).convert("RGB")
+        
+        # Preprocess using official processor
+        inputs = p(images=image, return_tensors="pt").to(DEVICE)
+        
+        # Inference
+        import time
+        start_time = time.time()
+        with torch.no_grad():
+            outputs = m(**inputs, output_attentions=True)
+            logits = outputs.logits
+            attentions = outputs.attentions
+            
+            probabilities = torch.softmax(logits, dim=1)
+            confidence, predicted_class = torch.max(probabilities, dim=1)
+            
+        end_time = time.time()
+        inference_time = int((end_time - start_time) * 1000)
+        
+        label = m.config.id2label[predicted_class.item()]
+        
+        # Attention rollout for Heatmap
+        rollout = compute_attention_rollout(attentions)
+        mask = rollout[0, 1:]
+        size = int(mask.shape[0] ** 0.5)
+        mask = mask.reshape(size, size).cpu().numpy()
+        
+        # Resize mask to original image size
+        orig_width, orig_height = image.size
+        mask = cv2.resize(mask, (orig_width, orig_height))
+        mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
+        
+        # Create Heatmap
+        heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
+        
+        # Overlay on original image
+        img_np = np.array(image)
+        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+        overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
+        
+        # Encode overlay to base64 for upload
+        _, buffer = cv2.imencode('.jpg', overlay)
+        overlay_base64 = base64.b64encode(buffer).decode('utf-8')
+        overlay_data_uri = f"data:image/jpeg;base64,{overlay_base64}"
+        
+        # Upload Heatmap to Supabase
+        heatmap_url, h_error = upload_to_supabase(overlay_data_uri, "heatmaps", folder=firebase_uid)
+        
+        return jsonify({
+            "prediction": label.capitalize(),
+            "confidence": round(confidence.item() * 100, 2),
+            "inferenceTime": inference_time,
+            "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400"
+        }), 200
+        
+    except Exception as e:
+        print(f"Inference error: {e}")
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':

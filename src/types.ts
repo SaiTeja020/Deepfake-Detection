@@ -27,4 +27,5 @@ export interface UserProfile {
   theme: 'dark' | 'light';
   defaultModel: ModelType;
   notifications: boolean;
+  bio?: string;
 }

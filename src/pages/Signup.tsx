@@ -48,6 +48,7 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                 email: userCredential.user.email || formData.email,
                 name: formData.fullName,
                 profile_pic_url: null,
+                bio: null,
                 save_history: true
             });
 
