@@ -244,26 +244,34 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                 <h4 className="text-xs font-bold uppercase tracking-widest heading-font">Biometric Reasoning</h4>
                 <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
                   <p className={`text-sm leading-relaxed font-light ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                    The <span className="font-bold text-blue-500">{selectedModel} Architecture</span> identifies {result.prediction === 'Fake' ? 'anomalous local variations in facial textures and pixel-level artifacts consistent with generative models' : 'statistically significant biological patterns and consistent lighting transitions across the detected face mesh'}.
+                    {result.explanation && result.explanation.trim()
+                      ? result.explanation
+                      : `The ${selectedModel} Architecture identifies ${result.prediction === 'Fake'
+                          ? 'anomalous local variations in facial textures and pixel-level artifacts consistent with generative models'
+                          : 'statistically significant biological patterns and consistent lighting transitions across the detected face mesh'}.`
+                    }
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Suspicious Domains</p>
                     <ul className="text-xs space-y-2 font-medium">
-                      <li className="flex items-center space-x-2">
-                        <div className={`w-1.5 h-1.5 rounded-full ${result.prediction === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
-                        <span>{result.prediction === 'Fake' ? 'Periorbital margin' : 'Natural eye geometry'}</span>
-                      </li>
-                      <li className="flex items-center space-x-2">
-                        <div className={`w-1.5 h-1.5 rounded-full ${result.prediction === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
-                        <span>{result.prediction === 'Fake' ? 'Mandibular texture' : 'Consistent skin tone'}</span>
-                      </li>
+                      {(result.suspicious_domains && result.suspicious_domains.length > 0
+                        ? result.suspicious_domains
+                        : result.prediction === 'Fake'
+                          ? ['Periorbital margin', 'Mandibular texture']
+                          : ['Natural eye geometry', 'Consistent skin tone']
+                      ).map((domain, idx) => (
+                        <li key={idx} className="flex items-center space-x-2">
+                          <div className={`w-1.5 h-1.5 rounded-full ${result.prediction === 'Fake' ? 'bg-rose-500' : 'bg-emerald-500'}`} />
+                          <span>{domain}</span>
+                        </li>
+                      ))}
                     </ul>
                   </div>
                   <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
                     <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Model Consensus</p>
-                    <p className="text-xs italic leading-snug opacity-70">{selectedModel === ModelType.ViT ? 'Global feature correlation analysis' : 'Shifted window patch hierarchy'} verified via forensic protocol.</p>
+                    <p className="text-xs italic leading-snug opacity-70">{result.model_consensus?.trim() || (selectedModel === ModelType.ViT ? 'Global feature correlation analysis verified via forensic protocol.' : 'Shifted window patch hierarchy verified via forensic protocol.')}</p>
                   </div>
                 </div>
               </div>

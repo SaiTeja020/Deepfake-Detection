@@ -36,3 +36,5 @@ dist-ssr
 
 Gradio_app/venv/
 
+backend/venv/
+

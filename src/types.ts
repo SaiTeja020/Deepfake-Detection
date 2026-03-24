@@ -10,6 +10,8 @@ export interface DetectionResult {
   inferenceTime: number;
   attentionMapUrl: string;
   explanation?: string;
+  suspicious_domains?: string[];
+  model_consensus?: string;
 }
 
 export interface ModelMetrics {
