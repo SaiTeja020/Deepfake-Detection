@@ -13,6 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { auth } from '../firebase';
 import { saveScanHistory, uploadScanMedia } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const isDark = theme === 'dark';
@@ -25,6 +26,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
 
+  const { profile } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
@@ -73,8 +75,8 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       const detectionResult = await detectDeepfake(auth.currentUser?.uid || 'guest', image, selectedModel);
       setResult(detectionResult);
 
-      // Upload media to Supabase Storage before saving history
-      if (auth.currentUser) {
+      // Upload media to Supabase Storage before saving history ONLY if save_history is enabled
+      if (auth.currentUser && profile?.save_history !== false) {
         const uploadRes = await uploadScanMedia(
           auth.currentUser.uid,
           image,

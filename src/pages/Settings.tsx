@@ -11,6 +11,7 @@ import {
 import { signOut, updatePassword, deleteUser } from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
+import { syncUser } from "../services/api";
 
 interface SettingsProps {
     theme: 'dark' | 'light' | 'system';
@@ -64,7 +65,7 @@ const Modal = ({
 
 const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => {
     const navigate = useNavigate();
-    const { user: firebaseUser, profile } = useAuth();
+    const { user: firebaseUser, profile, refreshProfile } = useAuth();
     // Toggles state
     const [saveImages, setSaveImages] = useState(profile?.save_history ?? false);
     const [allowData, setAllowData] = useState(true);
@@ -188,7 +189,25 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
 
                     <div className={`rounded-xl border shadow-[0_1px_3px_0_rgba(0,0,0,0.02)] hover:-translate-y-[1px] transition-all duration-200 ease-in-out overflow-hidden divide-y ${activeTheme === 'dark' ? 'border-blue-900 bg-blue-950/60 hover:border-blue-800 divide-blue-900/50' : 'border-blue-200 bg-blue-50 hover:border-blue-400 divide-blue-200/50'}`}>
                         {/* Toggle 1 */}
-                        <div className="p-5 flex items-center justify-between group cursor-pointer hover:bg-blue-50/80 dark:hover:bg-blue-950/60 transition-colors" onClick={() => setSaveImages(!saveImages)}>
+                        <div className="p-5 flex items-center justify-between group cursor-pointer hover:bg-blue-50/80 dark:hover:bg-blue-950/60 transition-colors" 
+                            onClick={async () => {
+                                const newValue = !saveImages;
+                                setSaveImages(newValue);
+                                if (firebaseUser) {
+                                    try {
+                                        await syncUser({
+                                            firebase_uid: firebaseUser.uid,
+                                            email: firebaseUser.email || profile?.email || '',
+                                            save_history: newValue
+                                        });
+                                        await refreshProfile();
+                                    } catch (err) {
+                                        console.error("Failed to update save history preference:", err);
+                                        // Revert on error
+                                        setSaveImages(!newValue);
+                                    }
+                                }
+                            }}>
                             <div className="pr-4">
                                 <p className="text-sm font-medium text-blue-800 dark:text-blue-400 mb-1 group-hover:text-slate-900 dark:group-hover:text-blue-200 transition-colors">Save Analysis History</p>
                                 <p className="text-xs text-blue-600 dark:text-blue-600">Store uploaded images securely for 30 days.</p>
