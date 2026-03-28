@@ -38,3 +38,4 @@ Gradio_app/venv/
 
 backend/venv/
 
+backend/test_api.py
