@@ -402,8 +402,8 @@ def detect_deepfake():
                 final_prediction,
                 conf_pct,
                 data.get('model_type', 'ViT'),
-                image_reference=None,
-                heatmap_reference=None
+                image_reference=image,
+                heatmap_reference=Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
             )
 
             if isinstance(llm_response, dict):

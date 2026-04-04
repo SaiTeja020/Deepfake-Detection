@@ -55,12 +55,11 @@ class GeminiProvider(LLMProvider):
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
-        image_info = image_reference or "<original image data provided>"
-        heatmap_info = heatmap_reference or "<attention heatmap generated>"
-
         prompt = (
             f"You are a deepfake detection forensic system. A face image was analyzed using the {model_used} architecture. "
             f"The model outcome is '{prediction}' with {confidence}% confidence. "
+            f"Your task is to explain WHY the model made this prediction based on the visual evidence in the provided original image and heatmap (if available). "
+            f"Do NOT contradict the model's outcome. "
             f"Ignore providing URLs. Use only brief technical detail. "
             f"Focus on image regions (face landmarks, edges, textures) and heatmap cues. "
             f"For '{prediction}' prediction, choose suspicious_domains that indicate authenticity if Real, or artifacts if Fake. "
@@ -69,8 +68,14 @@ class GeminiProvider(LLMProvider):
             "Example for Real: {\"explanation\":\"The model detected authentic eye reflections and natural skin transitions.\", \"suspicious_domains\":[\"Natural eye geometry\",\"Consistent skin tone\"], \"model_consensus\":\"Global feature correlation analysis verified via forensic protocol.\"} "
             "Example for Fake: {\"explanation\":\"The model found synthetic blending around mouth and eyes.\", \"suspicious_domains\":[\"Periorbital margin\",\"Mandibular texture\"], \"model_consensus\":\"Global feature correlation analysis verified via forensic protocol.\"}"
         )
+        contents = [prompt]
+        if image_reference is not None:
+            contents.append(image_reference)
+        if heatmap_reference is not None:
+            contents.append(heatmap_reference)
+            
         try:
-            response = self.model.generate_content(prompt)
+            response = self.model.generate_content(contents)
             generated = response.text.strip() if hasattr(response, 'text') else ''
             print(f"Gemini raw response: {generated}")  # Debug log
             parsed = parse_llm_structured_output(generated)
