@@ -72,3 +72,19 @@ cd Deepfake-Detection-ViT
 ## Install dependencies:
 
 pip install -r requirements.txt
+
+---
+
+## Running with Docker
+
+Run the entire application (both frontend and backend) using Docker Compose:
+
+1. Copy `backend/.env.example` to `backend/.env` and update the values.
+2. Ensure Docker and Docker Compose are installed.
+3. Start the application:
+   ```bash
+   docker-compose up --build
+   ```
+
+- Frontend: `http://localhost:3000`
+- Backend: `http://localhost:5000`
