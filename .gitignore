@@ -35,7 +35,11 @@ dist-ssr
 *.sw?
 
 Gradio_app/venv/
+Gradio_app/.venv/
 
 backend/venv/
+backend/.venv/
+
+.venv/
 
 backend/test_api.py

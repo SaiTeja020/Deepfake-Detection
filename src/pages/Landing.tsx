@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useScroll, useTransform, useSpring, AnimatePresence } from 'framer-motion';
 import { 
@@ -279,11 +279,7 @@ const BentoCard = ({ title, desc, icon: Icon, className = "", delay = 0 }: { tit
 
 const Landing: React.FC<{ theme: 'dark' | 'light', isLoggedIn: boolean }> = ({ theme, isLoggedIn }) => {
   const isDark = theme === 'dark';
-  const containerRef = useRef(null);
-  const { scrollYProgress } = useScroll({
-    target: containerRef,
-    offset: ["start start", "end end"]
-  });
+  const { scrollYProgress } = useScroll();
 
   // Parallax transforms for hero elements
   const heroY = useTransform(scrollYProgress, [0, 0.2], [0, -100]);
@@ -292,7 +288,7 @@ const Landing: React.FC<{ theme: 'dark' | 'light', isLoggedIn: boolean }> = ({ t
   const heroOpacity = useTransform(scrollYProgress, [0, 0.2], [1, 0]);
 
   return (
-    <div ref={containerRef} className="relative min-h-screen grain">
+    <div className="relative min-h-screen grain">
       <CustomCursor isDark={isDark} />
       
       {/* Background Elements */}

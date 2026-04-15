@@ -71,7 +71,14 @@ cd Deepfake-Detection-ViT
 
 ## Install dependencies:
 
-pip install -r requirements.txt
+```bash
+uv venv .venv
+# Linux/macOS
+source .venv/bin/activate
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+uv pip install -r backend/requirements.txt
+```
 
 ---
 
@@ -85,6 +92,7 @@ Run the entire application (both frontend and backend) using Docker Compose:
    ```bash
    docker-compose up --build
    ```
+   The backend container creates `/app/.venv` and installs Python dependencies via `uv` on startup.
 
 - Frontend: `http://localhost:3000`
 - Backend: `http://localhost:5000`

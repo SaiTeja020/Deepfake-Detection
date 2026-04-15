@@ -1,12 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import Landing from './pages/Landing';
-import Product from './pages/Product';
-import Compare from './pages/Compare';
-import Profile from './pages/Profile';
-import Settings from './pages/Settings';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
 import { useAuth } from './context/AuthContext';
 import { auth } from './firebase';
 import { signOut } from 'firebase/auth';
@@ -24,6 +18,13 @@ import {
   SunIcon,
   MoonIcon
 } from '@heroicons/react/24/outline';
+
+const Product = lazy(() => import('./pages/Product'));
+const Compare = lazy(() => import('./pages/Compare'));
+const Profile = lazy(() => import('./pages/Profile'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Login = lazy(() => import('./pages/Login'));
+const Signup = lazy(() => import('./pages/Signup'));
 
 const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn, profile }: {
   isCollapsed: boolean,
@@ -242,16 +243,22 @@ const App: React.FC = () => {
       <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${activeTheme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#fafafa] text-[#0f172a]'}`}>
         <main className={`flex-1 transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
           <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pb-0">
-            <Routes>
-              <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={!!user} />} />
-              <Route path="/login" element={!user ? <Login theme={activeTheme} /> : <Navigate to="/product" />} />
-              <Route path="/signup" element={!user ? <Signup theme={activeTheme} /> : <Navigate to="/product" />} />
-              <Route path="/product" element={user ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
-              <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
-              <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
-              {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
-              <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
-            </Routes>
+            <Suspense fallback={
+              <div className="min-h-[50vh] flex items-center justify-center">
+                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            }>
+              <Routes>
+                <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={!!user} />} />
+                <Route path="/login" element={!user ? <Login theme={activeTheme} /> : <Navigate to="/product" />} />
+                <Route path="/signup" element={!user ? <Signup theme={activeTheme} /> : <Navigate to="/product" />} />
+                <Route path="/product" element={user ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
+                <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
+                <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
+                {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
+                <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
+              </Routes>
+            </Suspense>
           </div>
         </main>
         <div
