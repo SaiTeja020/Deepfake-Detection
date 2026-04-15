@@ -24,6 +24,7 @@ services:
       - uv_cache:/root/.cache/uv
     environment:
       - FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json
+      - UV_LINK_MODE=copy
     env_file:
       - ./backend/.env
 

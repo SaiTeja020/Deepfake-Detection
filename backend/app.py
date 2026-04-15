@@ -78,7 +78,8 @@ def get_model():
             model = ViTForImageClassification.from_pretrained(
                 MODEL_NAME,
                 token=hf_token,
-                output_attentions=True
+                output_attentions=True,
+                low_cpu_mem_usage=True
             )
             
             # Label Correction: SARVM model uses 0:FAKE, 1:REAL
