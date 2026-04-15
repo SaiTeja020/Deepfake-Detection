@@ -19,14 +19,23 @@ import {
   MoonIcon
 } from '@heroicons/react/24/outline';
 
-const Product = lazy(() => import('./pages/Product'));
-const Compare = lazy(() => import('./pages/Compare'));
-const Profile = lazy(() => import('./pages/Profile'));
-const Settings = lazy(() => import('./pages/Settings'));
-const Login = lazy(() => import('./pages/Login'));
-const Signup = lazy(() => import('./pages/Signup'));
+const routeLoaders = {
+  product: () => import('./pages/Product'),
+  compare: () => import('./pages/Compare'),
+  profile: () => import('./pages/Profile'),
+  settings: () => import('./pages/Settings'),
+  login: () => import('./pages/Login'),
+  signup: () => import('./pages/Signup'),
+};
 
-const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn, profile }: {
+const Product = lazy(routeLoaders.product);
+const Compare = lazy(routeLoaders.compare);
+const Profile = lazy(routeLoaders.profile);
+const Settings = lazy(routeLoaders.settings);
+const Login = lazy(routeLoaders.login);
+const Signup = lazy(routeLoaders.signup);
+
+const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn, profile, onPrefetchRoute }: {
   isCollapsed: boolean,
   setIsCollapsed: (v: boolean) => void,
   isMobileOpen: boolean,
@@ -35,7 +44,8 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
   toggleTheme: () => void,
   onLogout: () => void,
   isLoggedIn: boolean,
-  profile: any
+  profile: any,
+  onPrefetchRoute: (path: string) => void
 }) => {
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
@@ -106,6 +116,8 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
                 key={item.path}
                 to={item.path}
                 onClick={() => setMobileOpen(false)}
+                onMouseEnter={() => onPrefetchRoute(item.path)}
+                onFocus={() => onPrefetchRoute(item.path)}
                 className={`
                   relative flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all group
                   ${active
@@ -225,6 +237,15 @@ const App: React.FC = () => {
     }
   };
 
+  const handlePrefetchRoute = (path: string) => {
+    if (path === '/product') routeLoaders.product();
+    if (path === '/compare') routeLoaders.compare();
+    if (path === '/profile') routeLoaders.profile();
+    if (path === '/settings') routeLoaders.settings();
+    if (path === '/login') routeLoaders.login();
+    if (path === '/signup') routeLoaders.signup();
+  };
+
   if (loading) {
     return (
       <div className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${activeTheme === 'dark' ? 'bg-[#09090b]' : 'bg-[#fafafa]'}`}>
@@ -275,6 +296,7 @@ const App: React.FC = () => {
             isLoggedIn={!!user}
             onLogout={handleLogout}
             profile={profile}
+            onPrefetchRoute={handlePrefetchRoute}
           />
         </div>
       </div>

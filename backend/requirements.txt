@@ -10,3 +10,4 @@ torchvision==0.17.2
 opencv-python-headless==4.9.0.80
 transformers==4.38.2
 google-generativeai==0.8.5
+accelerate==0.28.0
