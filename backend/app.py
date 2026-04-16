@@ -12,7 +12,11 @@ import io
 import torch
 import numpy as np
 import cv2
-from transformers import ViTImageProcessor, ViTForImageClassification
+from transformers import AutoImageProcessor, AutoModelForImageClassification, ViTImageProcessor
+from modeling_vit_refiner import ViTRefinerModel
+from configuration_vit_refiner import ViTRefinerConfig
+from safetensors.torch import load_file
+import traceback
 from PIL import Image
 import torchvision.transforms as transforms
 
@@ -39,7 +43,7 @@ else:
     db = None
 
 # Deepfake Model Configuration
-MODEL_NAME = "SARVM/ViT_Deepfake"
+MODEL_NAME = "SARVM/Refined_ViT"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = None
@@ -68,36 +72,46 @@ def get_model():
     if model is None:
         try:
             hf_token = os.getenv("HF_TOKEN")
-            print(f"Loading model {MODEL_NAME} to {DEVICE}...")
+            print(f"Loading custom model {MODEL_NAME} from local files...")
             
+            # Load configuration
+            config = ViTRefinerConfig() # Uses defaults or we could load from config.json
+            
+            # Use standard ViT image processor for the base model
             processor = ViTImageProcessor.from_pretrained(
-                MODEL_NAME,
+                config.vit_model_name,
                 token=hf_token
             )
             
-            model = ViTForImageClassification.from_pretrained(
-                MODEL_NAME,
-                token=hf_token,
-                output_attentions=True,
-                low_cpu_mem_usage=True
-            )
+            # Instantiate custom model
+            model = ViTRefinerModel(config)
             
-            # Label Correction: SARVM model uses 0:FAKE, 1:REAL
+            # Load local safetensors weights
+            weights_path = os.path.join(os.path.dirname(__file__), "refined_vit_final.safetensors")
+            if os.path.exists(weights_path):
+                state_dict = load_file(weights_path)
+                model.load_state_dict(state_dict)
+                print(f"Successfully loaded weights from {weights_path}")
+            else:
+                print(f"ERROR: Weights file not found at {weights_path}")
+            
+            # Label Correction
             model.config.id2label = {0: "FAKE", 1: "REAL"}
             model.config.label2id = {"FAKE": 0, "REAL": 1}
             
             model.to(DEVICE)
             model.eval()
             
-            # Transform as fallback if processor is not used directly
+            # Transform as fallback
             transform = transforms.Compose([
                 transforms.Resize((224, 224)),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-            print("Deepfake model and processor initialized successfully.")
+            print("Deepfake custom model initialized successfully.")
         except Exception as e:
             print(f"CRITICAL: Failed to load model: {e}")
+            traceback.print_exc()
     return model, processor, transform
 
 
@@ -327,16 +341,21 @@ def detect_deepfake():
         img_data = base64.b64decode(image_content)
         image = Image.open(io.BytesIO(img_data)).convert("RGB")
         
-        # Preprocess using official processor
-        inputs = p(images=image, return_tensors="pt").to(DEVICE)
+        # Preprocess using official processor or fallback transform
+        if p:
+            inputs = p(images=image, return_tensors="pt").to(DEVICE)
+        else:
+            # Manual preprocessing
+            img_tensor = t(image).unsqueeze(0).to(DEVICE)
+            inputs = {"pixel_values": img_tensor}
         
         # Inference
         import time
         start_time = time.time()
         with torch.no_grad():
             outputs = m(**inputs, output_attentions=True)
-            logits = outputs.logits
-            attentions = outputs.attentions
+            logits = outputs["logits"]
+            attentions = outputs["attentions"]
             
             probabilities = torch.softmax(logits, dim=1)
             confidence, predicted_class = torch.max(probabilities, dim=1)
@@ -347,31 +366,41 @@ def detect_deepfake():
         label = m.config.id2label[predicted_class.item()]
         
         # Attention rollout for Heatmap
-        rollout = compute_attention_rollout(attentions)
-        mask = rollout[0, 1:]
-        size = int(mask.shape[0] ** 0.5)
-        mask = mask.reshape(size, size).cpu().numpy()
-        
-        # Resize mask to original image size
-        orig_width, orig_height = image.size
-        mask = cv2.resize(mask, (orig_width, orig_height))
-        mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
-        
-        # Create Heatmap
-        heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
-        
-        # Overlay on original image
-        img_np = np.array(image)
-        img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
-        
-        # Encode overlay to base64 for upload
-        _, buffer = cv2.imencode('.jpg', overlay)
-        overlay_base64 = base64.b64encode(buffer).decode('utf-8')
-        overlay_data_uri = f"data:image/jpeg;base64,{overlay_base64}"
-        
-        # Upload Heatmap to Supabase
-        heatmap_url, h_error = upload_to_supabase(overlay_data_uri, "heatmaps", folder=firebase_uid)
+        heatmap_url = None
+        if attentions is not None:
+            try:
+                rollout = compute_attention_rollout(attentions)
+                mask = rollout[0, 1:]
+                size = int(mask.shape[0] ** 0.5)
+                mask = mask.reshape(size, size).cpu().numpy()
+                
+                # Resize mask to original image size
+                orig_width, orig_height = image.size
+                mask = cv2.resize(mask, (orig_width, orig_height))
+                mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
+                
+                # Create Heatmap
+                heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
+                
+                # Overlay on original image
+                img_np = np.array(image)
+                img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
+                overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
+                
+                # Encode overlay to base64 for upload
+                _, buffer = cv2.imencode('.jpg', overlay)
+                overlay_base64 = base64.b64encode(buffer).decode('utf-8')
+                overlay_data_uri = f"data:image/jpeg;base64,{overlay_base64}"
+                
+                # Upload Heatmap to Supabase
+                heatmap_url, h_error = upload_to_supabase(overlay_data_uri, "heatmaps", folder=firebase_uid)
+                if h_error:
+                    print(f"Heatmap upload warning: {h_error}")
+            except Exception as e:
+                print(f"Heatmap generation error: {e}")
+                traceback.print_exc()
+        else:
+            print("Warning: No attentions received from model, skipping heatmap.")
         
         final_prediction = label.capitalize()
         conf_pct = round(confidence.item() * 100, 2)
@@ -434,6 +463,7 @@ def detect_deepfake():
         
     except Exception as e:
         print(f"Inference error: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':

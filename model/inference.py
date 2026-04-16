@@ -7,7 +7,7 @@ import torchvision.transforms as transforms
 # Configuration
 # ==========================================
 
-MODEL_NAME = "SARVM/ViT_Deepfake"  # CHANGE THIS
+MODEL_NAME = "SARVM/Refined_ViT"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ==========================================
