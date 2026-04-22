@@ -1,0 +1,5 @@
+{
+  "name": "Copy of Deepfake Detection Hub",
+  "description": "A high-performance deepfake detection suite leveraging Vision Transformers and Swin Transformers to identify manipulated media with industry-leading accuracy.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,41 @@
+.ipynb_checkpoints/
+checkpoints/
+__pycache__/
+*.pth
+*.bin
+*.safetensors
+.env
+foresight-2b6ca-firebase-adminsdk-fbsvc-48aa5ab091.json
+
+# Web dev git ignores
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+Gradio_app/venv/
+
+backend/venv/
+
+backend/test_api.py
