@@ -20,6 +20,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
   const [isDetecting, setIsDetecting] = useState(false);
   const [vitResult, setVitResult] = useState<DetectionResult | null>(null);
   const [swinResult, setSwinResult] = useState<DetectionResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
@@ -30,6 +31,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
       setVitResult(null);
       setSwinResult(null);
       setFileInfo(null);
+      setError(null);
       setIsRemoving(false);
     }, 300);
   };
@@ -48,24 +50,29 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
         setFileInfo({ name: file.name, size: fileSize });
         setVitResult(null);
         setSwinResult(null);
+        setError(null);
       };
       reader.readAsDataURL(file);
     }
   };
 
-  const runParallelInference = async () => {
+  const runInference = async () => {
     if (!image) return;
     setIsDetecting(true);
+    setError(null);
     try {
       const uid = auth.currentUser?.uid || 'guest';
-      const [vitRes, swinRes] = await Promise.all([
-        detectDeepfake(uid, image, ModelType.ViT),
-        detectDeepfake(uid, image, ModelType.Swin)
-      ]);
+      
+      // Run sequentially to prevent backend OOM / timeouts
+      const vitRes = await detectDeepfake(uid, image, ModelType.ViT);
       setVitResult(vitRes);
+      
+      const swinRes = await detectDeepfake(uid, image, ModelType.Swin);
       setSwinResult(swinRes);
-    } catch (err) {
-      console.error(err);
+      
+    } catch (err: any) {
+      console.error("Inference Error:", err);
+      setError(err?.response?.data?.error || err.message || "Model analysis failed. Please try again.");
     } finally {
       setIsDetecting(false);
     }
@@ -121,13 +128,16 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
           <p className={`text-sm font-light ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Benchmark ViT vs Swin Transformer performance side-by-side.</p>
         </div>
 
-        <button
-          disabled={!image || isDetecting}
-          onClick={runParallelInference}
-          className={`btn-primary px-10 ${!image || isDetecting ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
-        >
-          {isDetecting ? 'Running Parallel Analysis...' : 'Run Benchmarks'}
-        </button>
+        <div className="flex flex-col items-end gap-2">
+          <button
+            disabled={!image || isDetecting}
+            onClick={runInference}
+            className={`btn-primary px-10 ${!image || isDetecting ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+          >
+            {isDetecting ? 'Running Analysis...' : 'Run Benchmarks'}
+          </button>
+          {error && <p className="text-rose-500 text-xs font-medium">{error}</p>}
+        </div>
       </header>
 
       <div className="max-w-4xl mx-auto space-y-12">
