@@ -1,12 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
 import Landing from './pages/Landing';
-import Product from './pages/Product';
-import Compare from './pages/Compare';
-import Profile from './pages/Profile';
-import Settings from './pages/Settings';
-import Login from './pages/Login';
-import Signup from './pages/Signup';
 import { useAuth } from './context/AuthContext';
 import { auth } from './firebase';
 import { signOut } from 'firebase/auth';
@@ -25,7 +19,23 @@ import {
   MoonIcon
 } from '@heroicons/react/24/outline';
 
-const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn, profile }: {
+const routeLoaders = {
+  product: () => import('./pages/Product'),
+  compare: () => import('./pages/Compare'),
+  profile: () => import('./pages/Profile'),
+  settings: () => import('./pages/Settings'),
+  login: () => import('./pages/Login'),
+  signup: () => import('./pages/Signup'),
+};
+
+const Product = lazy(routeLoaders.product);
+const Compare = lazy(routeLoaders.compare);
+const Profile = lazy(routeLoaders.profile);
+const Settings = lazy(routeLoaders.settings);
+const Login = lazy(routeLoaders.login);
+const Signup = lazy(routeLoaders.signup);
+
+const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, theme, toggleTheme, onLogout, isLoggedIn, profile, onPrefetchRoute }: {
   isCollapsed: boolean,
   setIsCollapsed: (v: boolean) => void,
   isMobileOpen: boolean,
@@ -34,7 +44,8 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
   toggleTheme: () => void,
   onLogout: () => void,
   isLoggedIn: boolean,
-  profile: any
+  profile: any,
+  onPrefetchRoute: (path: string) => void
 }) => {
   const location = useLocation();
   const isActive = (path: string) => location.pathname === path;
@@ -105,6 +116,8 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
                 key={item.path}
                 to={item.path}
                 onClick={() => setMobileOpen(false)}
+                onMouseEnter={() => onPrefetchRoute(item.path)}
+                onFocus={() => onPrefetchRoute(item.path)}
                 className={`
                   relative flex items-center space-x-3 px-3 py-2.5 rounded-xl transition-all group
                   ${active
@@ -224,6 +237,15 @@ const App: React.FC = () => {
     }
   };
 
+  const handlePrefetchRoute = (path: string) => {
+    if (path === '/product') routeLoaders.product();
+    if (path === '/compare') routeLoaders.compare();
+    if (path === '/profile') routeLoaders.profile();
+    if (path === '/settings') routeLoaders.settings();
+    if (path === '/login') routeLoaders.login();
+    if (path === '/signup') routeLoaders.signup();
+  };
+
   if (loading) {
     return (
       <div className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${activeTheme === 'dark' ? 'bg-[#09090b]' : 'bg-[#fafafa]'}`}>
@@ -242,16 +264,22 @@ const App: React.FC = () => {
       <div className={`flex min-h-screen transition-colors duration-500 selection:bg-blue-500/30 overflow-x-hidden ${activeTheme === 'dark' ? 'bg-[#09090b] text-[#fafafa]' : 'bg-[#fafafa] text-[#0f172a]'}`}>
         <main className={`flex-1 transition-all duration-300 ease-in-out ${sidebarCollapsed ? 'lg:pl-20' : 'lg:pl-64'}`}>
           <div className="max-w-[1400px] mx-auto p-6 md:p-12 lg:p-16 lg:pb-0">
-            <Routes>
-              <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={!!user} />} />
-              <Route path="/login" element={!user ? <Login theme={activeTheme} /> : <Navigate to="/product" />} />
-              <Route path="/signup" element={!user ? <Signup theme={activeTheme} /> : <Navigate to="/product" />} />
-              <Route path="/product" element={user ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
-              <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
-              <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
-              {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
-              <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
-            </Routes>
+            <Suspense fallback={
+              <div className="min-h-[50vh] flex items-center justify-center">
+                <div className="w-8 h-8 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            }>
+              <Routes>
+                <Route path="/" element={<Landing theme={activeTheme} isLoggedIn={!!user} />} />
+                <Route path="/login" element={!user ? <Login theme={activeTheme} /> : <Navigate to="/product" />} />
+                <Route path="/signup" element={!user ? <Signup theme={activeTheme} /> : <Navigate to="/product" />} />
+                <Route path="/product" element={user ? <Product theme={activeTheme} /> : <Navigate to="/login" />} />
+                <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
+                <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
+                {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
+                <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
+              </Routes>
+            </Suspense>
           </div>
         </main>
         <div
@@ -268,6 +296,7 @@ const App: React.FC = () => {
             isLoggedIn={!!user}
             onLogout={handleLogout}
             profile={profile}
+            onPrefetchRoute={handlePrefetchRoute}
           />
         </div>
       </div>

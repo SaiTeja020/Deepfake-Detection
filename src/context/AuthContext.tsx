@@ -48,6 +48,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
+            // Don't block initial app render on backend profile API.
+            setLoading(false);
             if (currentUser) {
                 // Fetch profile when user logs in
                 try {
@@ -60,7 +62,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             } else {
                 setProfile(null);
             }
-            setLoading(false);
         });
 
         return () => unsubscribe();
