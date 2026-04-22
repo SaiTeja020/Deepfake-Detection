@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ModelType, DetectionResult } from '../types';
+import { ModelType, DetectionResult, FaceResult } from '../types';
 import { detectDeepfake } from '../services/api';
 import {
   CloudArrowUpIcon,
@@ -14,6 +14,77 @@ import {
 import { auth } from '../firebase';
 import { saveScanHistory, uploadScanMedia } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+
+// ---------------------------------------------------------------------------
+// Per-face breakdown panel
+// ---------------------------------------------------------------------------
+const VERDICT_STYLES: Record<string, { border: string; bg: string; text: string; dot: string }> = {
+  Deepfake:   { border: 'border-rose-500/30',    bg: 'bg-rose-500/10',    text: 'text-rose-400',    dot: 'bg-rose-500'    },
+  Suspicious: { border: 'border-amber-500/30',   bg: 'bg-amber-500/10',   text: 'text-amber-400',   dot: 'bg-amber-500'   },
+  Real:       { border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', text: 'text-emerald-400', dot: 'bg-emerald-500' },
+};
+
+const FaceBreakdownPanel: React.FC<{ faces: FaceResult[]; isDark: boolean }> = ({ faces, isDark }) => {
+  if (!faces || faces.length === 0) return null;
+  return (
+    <div className="space-y-6 pt-10 border-t border-zinc-900/10">
+      <h4 className="text-xs font-bold uppercase tracking-widest heading-font">Per-Face Analysis</h4>
+      <div className="space-y-3">
+        {faces.map((face) => {
+          const styles = VERDICT_STYLES[face.face_verdict] ?? VERDICT_STYLES.Real;
+          const pct    = Math.round(face.fused_score * 100);
+          return (
+            <div
+              key={face.face_id}
+              className={`p-4 rounded-xl border ${styles.border} ${styles.bg}`}
+            >
+              {/* Header row */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center space-x-2">
+                  <div className={`w-2 h-2 rounded-full ${styles.dot}`} />
+                  <span className="text-xs font-bold uppercase tracking-widest">
+                    Face {face.face_id}
+                  </span>
+                </div>
+                <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${styles.bg} ${styles.text} border ${styles.border}`}>
+                  {face.face_verdict}
+                </span>
+              </div>
+
+              {/* Fused score bar */}
+              <div className={`h-1.5 w-full rounded-full mb-3 ${ isDark ? 'bg-zinc-900' : 'bg-slate-100'}`}>
+                <div
+                  className={`h-full rounded-full transition-all duration-[1000ms] ${
+                    face.face_verdict === 'Deepfake' ? 'bg-rose-500'
+                    : face.face_verdict === 'Suspicious' ? 'bg-amber-500'
+                    : 'bg-emerald-500'
+                  }`}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+
+              {/* Metrics row */}
+              <div className="grid grid-cols-3 gap-2 text-center">
+                <div>
+                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Fused</p>
+                  <p className={`text-xs font-mono font-bold ${styles.text}`}>{face.fused_score.toFixed(2)}</p>
+                </div>
+                <div>
+                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Eye Asym</p>
+                  <p className="text-xs font-mono font-bold">{(face.geometry.eye_asymmetry * 100).toFixed(1)}%</p>
+                </div>
+                <div>
+                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>ViT Conf</p>
+                  <p className="text-xs font-mono font-bold">{(face.cnn_conf * 100).toFixed(0)}%</p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
 
 const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const isDark = theme === 'dark';
@@ -277,6 +348,11 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   </div>
                 </div>
               </div>
+
+              {/* Per-face breakdown — shown when pipeline returns ≥1 face */}
+              {result.faces && result.faces.length > 0 && (
+                <FaceBreakdownPanel faces={result.faces} isDark={isDark} />
+              )}
             </div>
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center text-center opacity-20">

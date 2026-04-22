@@ -15,6 +15,7 @@ import cv2
 from transformers import ViTImageProcessor, ViTForImageClassification
 from PIL import Image
 import torchvision.transforms as transforms
+from pipeline import DeepfakePipeline
 
 load_dotenv()
 
@@ -45,6 +46,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = None
 processor = None
 transform = None
+deepfake_pipeline = None
 
 def compute_attention_rollout(attentions):
     """Refined attention rollout calculation from Gradio reference"""
@@ -64,37 +66,40 @@ def compute_attention_rollout(attentions):
     return joint_attentions[-1]
 
 def get_model():
-    global model, processor, transform
+    global model, processor, transform, deepfake_pipeline
     if model is None:
         try:
             hf_token = os.getenv("HF_TOKEN")
             print(f"Loading model {MODEL_NAME} to {DEVICE}...")
-            
+
             processor = ViTImageProcessor.from_pretrained(
                 MODEL_NAME,
                 token=hf_token
             )
-            
+
             model = ViTForImageClassification.from_pretrained(
                 MODEL_NAME,
                 token=hf_token,
                 output_attentions=True
             )
-            
+
             # Label Correction: SARVM model uses 0:FAKE, 1:REAL
             model.config.id2label = {0: "FAKE", 1: "REAL"}
             model.config.label2id = {"FAKE": 0, "REAL": 1}
-            
+
             model.to(DEVICE)
             model.eval()
-            
+
             # Transform as fallback if processor is not used directly
             transform = transforms.Compose([
                 transforms.Resize((224, 224)),
                 transforms.ToTensor(),
                 transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-            print("Deepfake model and processor initialized successfully.")
+
+            # Initialise the multi-face pipeline (MTCNN + MediaPipe loaded lazily)
+            deepfake_pipeline = DeepfakePipeline(model, processor, DEVICE)
+            print("Deepfake model, processor, and pipeline initialised successfully.")
         except Exception as e:
             print(f"CRITICAL: Failed to load model: {e}")
     return model, processor, transform
@@ -307,103 +312,125 @@ def detect_deepfake():
     data = request.json
     base64_image = data.get('image')
     firebase_uid = data.get('firebase_uid', 'guest')
-    
+
     if not base64_image:
         return jsonify({"error": "Missing image data"}), 400
-        
+
     try:
-        # Load model lazily
+        # Load model lazily (also initialises deepfake_pipeline)
         m, p, t = get_model()
-        if m is None:
+        if m is None or deepfake_pipeline is None:
             return jsonify({"error": "Deepfake model is not loaded on server."}), 503
-            
-        # Decode base64
+
+        # Decode base64 image
         if ',' in base64_image:
             image_content = base64_image.split(',')[1]
         else:
             image_content = base64_image
-            
+
         img_data = base64.b64decode(image_content)
         image = Image.open(io.BytesIO(img_data)).convert("RGB")
-        
-        # Preprocess using official processor
-        inputs = p(images=image, return_tensors="pt").to(DEVICE)
-        
-        # Inference
+
         import time
         start_time = time.time()
+
+        # ================================================================
+        # Step 1 — Multi-face pipeline (MTCNN + geometry + score fusion)
+        # ================================================================
+        pipeline_result = deepfake_pipeline.run(image)
+
+        # ================================================================
+        # Step 2 — Attention rollout heatmap (full-image ViT pass)
+        # ================================================================
+        inputs_full = p(images=image, return_tensors="pt").to(DEVICE)
         with torch.no_grad():
-            outputs = m(**inputs, output_attentions=True)
-            logits = outputs.logits
-            attentions = outputs.attentions
-            
-            probabilities = torch.softmax(logits, dim=1)
-            confidence, predicted_class = torch.max(probabilities, dim=1)
-            
+            outputs_full = m(**inputs_full, output_attentions=True)
+            attentions = outputs_full.attentions
+
         end_time = time.time()
         inference_time = int((end_time - start_time) * 1000)
-        
-        label = m.config.id2label[predicted_class.item()]
-        
-        # Attention rollout for Heatmap
+
         rollout = compute_attention_rollout(attentions)
         mask = rollout[0, 1:]
         size = int(mask.shape[0] ** 0.5)
         mask = mask.reshape(size, size).cpu().numpy()
-        
-        # Resize mask to original image size
+
         orig_width, orig_height = image.size
         mask = cv2.resize(mask, (orig_width, orig_height))
         mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
-        
-        # Create Heatmap
-        heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
-        
-        # Overlay on original image
+
+        heatmap_bgr = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
         img_np = np.array(image)
         img_bgr = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
-        overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
-        
-        # Encode overlay to base64 for upload
+        overlay = cv2.addWeighted(img_bgr, 0.6, heatmap_bgr, 0.4, 0)
+
+        # Draw face bounding boxes from pipeline on top of heatmap
+        overlay = DeepfakePipeline.draw_face_boxes(image, pipeline_result, heatmap_bgr=overlay)
+
         _, buffer = cv2.imencode('.jpg', overlay)
         overlay_base64 = base64.b64encode(buffer).decode('utf-8')
         overlay_data_uri = f"data:image/jpeg;base64,{overlay_base64}"
-        
-        # Upload Heatmap to Supabase
-        heatmap_url, h_error = upload_to_supabase(overlay_data_uri, "heatmaps", folder=firebase_uid)
-        
-        final_prediction = label.capitalize()
-        conf_pct = round(confidence.item() * 100, 2)
-        print(f"Prediction: {final_prediction}, Confidence: {conf_pct}")  # Debug log
 
-        # Reliable fallback values
+        heatmap_url, _ = upload_to_supabase(overlay_data_uri, "heatmaps", folder=firebase_uid)
+
+        # ================================================================
+        # Step 3 — Map pipeline verdict to frontend labels
+        # ================================================================
+        final_label = pipeline_result["final_label"]   # Deepfake | Suspicious | Real | NoFaces
+        final_score = pipeline_result["confidence"]     # [0, 1]
+        face_list   = pipeline_result["faces"]
+
+        # Legacy 'prediction' field the frontend expects (Fake / Suspicious / Real)
+        if final_label == "Deepfake":
+            final_prediction = "Fake"
+        elif final_label == "Suspicious":
+            final_prediction = "Suspicious"
+        else:
+            final_prediction = "Real"
+
+        conf_pct = round(final_score * 100, 2)
+        print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)}")
+
+        # ================================================================
+        # Step 4 — Build per-face context for LLM and fallback text
+        # ================================================================
+        face_lines = []
+        for f in face_list:
+            geom = f["geometry"]
+            face_lines.append(
+                f"Face {f['face_id']}: verdict={f['cnn_label']} "
+                f"(cnn={f['cnn_conf']:.2f}, fused={f['fused_score']:.2f}), "
+                f"eye_asymmetry={geom['eye_asymmetry']:.3f}, "
+                f"lip_distance={geom['lip_distance']:.1f}px"
+            )
+        face_context = "\n".join(face_lines) or "No individual face data."
+
         fallback_explanation = (
-            "The "
-            f"{final_prediction} Architecture "
-            "identifies "
-            + ("anomalous local variations in facial textures and pixel-level artifacts consistent with generative models" if final_prediction == 'Fake' else "statistically significant biological patterns and consistent lighting transitions across the detected face mesh")
-            + "."
+            f"Analysis of {len(face_list)} face(s): "
+            + ("Anomalous facial geometry and texture artifacts were detected, consistent with synthetic generation."
+               if final_prediction in ("Fake", "Suspicious")
+               else "Statistically consistent biological patterns and lighting transitions were observed.")
         )
-        fallback_suspicious_domains = [
-            "Periorbital margin",
-            "Mandibular texture"
-        ] if final_prediction == 'Fake' else [
-            "Natural eye geometry",
-            "Consistent skin tone"
-        ]
-        model_type_used = data.get('model_type', 'ViT')
+        fallback_suspicious_domains = (
+            ["Periorbital margin", "Mandibular texture", "Eye asymmetry"]
+            if final_prediction in ("Fake", "Suspicious")
+            else ["Natural eye geometry", "Consistent skin tone", "Symmetric facial structure"]
+        )
         fallback_model_consensus = (
-            "Global feature correlation analysis verified via forensic protocol." if model_type_used == 'ViT' else "Shifted window patch hierarchy verified via forensic protocol."
+            f"Multi-face analysis across {len(face_list)} face(s) via geometry-augmented ViT forensic protocol."
         )
 
-        # Connect to LLM Adapter Layer (with explicit image + heatmap context)
+        # ================================================================
+        # Step 5 — LLM explanation (geometry-aware)
+        # ================================================================
         try:
             llm_response = llm_service.get_explanation(
                 final_prediction,
                 conf_pct,
                 data.get('model_type', 'ViT'),
                 image_reference=None,
-                heatmap_reference=None
+                heatmap_reference=None,
+                pipeline_context=face_context,
             )
 
             if isinstance(llm_response, dict):
@@ -411,7 +438,7 @@ def detect_deepfake():
                 suspicious_domains = llm_response.get('suspicious_domains', []) or list(fallback_suspicious_domains)
                 model_consensus = llm_response.get('model_consensus', '').strip() or fallback_model_consensus
             else:
-                expl_candidate = (str(llm_response).strip() if llm_response is not None else '')
+                expl_candidate = str(llm_response).strip() if llm_response else ''
                 explanation = expl_candidate if is_informative_explanation(expl_candidate) else fallback_explanation
                 suspicious_domains = list(fallback_suspicious_domains)
                 model_consensus = fallback_model_consensus
@@ -422,15 +449,21 @@ def detect_deepfake():
             model_consensus = fallback_model_consensus
 
         return jsonify({
+            # --- legacy fields (frontend compatible) ---
             "prediction": final_prediction,
             "confidence": conf_pct,
             "inferenceTime": inference_time,
             "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400",
             "explanation": explanation,
             "suspicious_domains": suspicious_domains,
-            "model_consensus": model_consensus
+            "model_consensus": model_consensus,
+            # --- extended pipeline fields ---
+            "final_label": final_label,
+            "faces": face_list,
+            "face_count": len(face_list),
+            "no_faces_detected": pipeline_result.get("no_faces_detected", False),
         }), 200
-        
+
     except Exception as e:
         print(f"Inference error: {e}")
         return jsonify({"error": str(e)}), 500

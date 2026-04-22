@@ -2,7 +2,7 @@ import os
 import json
 
 class LLMProvider:
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
         raise NotImplementedError
 
 
@@ -54,13 +54,18 @@ class GeminiProvider(LLMProvider):
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
         image_info = image_reference or "<original image data provided>"
         heatmap_info = heatmap_reference or "<attention heatmap generated>"
 
+        face_block = (
+            f"\nPer-face pipeline data:\n{pipeline_context}"
+            if pipeline_context else ""
+        )
+
         prompt = (
             f"You are a deepfake detection forensic system. A face image was analyzed using the {model_used} architecture. "
-            f"The model outcome is '{prediction}' with {confidence}% confidence. "
+            f"The model outcome is '{prediction}' with {confidence}% confidence.{face_block} "
             f"Ignore providing URLs. Use only brief technical detail. "
             f"Focus on image regions (face landmarks, edges, textures) and heatmap cues. "
             f"For '{prediction}' prediction, choose suspicious_domains that indicate authenticity if Real, or artifacts if Fake. "
@@ -105,17 +110,19 @@ class LlamaProvider(LLMProvider):
             print(f"Llama init error: {e}")
             self.client = None
 
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
         if self.client is None:
             print("Llama client unavailable, using fallback")
             return build_fallback_explanation(prediction, confidence, model_used, image_reference, heatmap_reference)
 
-        image_info = image_reference or "<original image data provided>"
-        heatmap_info = heatmap_reference or "<attention heatmap generated>"
+        face_block = (
+            f"\nPer-face pipeline data:\n{pipeline_context}"
+            if pipeline_context else ""
+        )
 
         prompt = (
             f"You are a deepfake detection forensic system. A face image was analyzed using the {model_used} architecture. "
-            f"The model outcome is '{prediction}' with {confidence}% confidence. "
+            f"The model outcome is '{prediction}' with {confidence}% confidence.{face_block} "
             f"Ignore providing URLs. Use only brief technical detail. "
             f"Focus on image regions (face landmarks, edges, textures) and heatmap cues. "
             f"For '{prediction}' prediction, choose suspicious_domains that indicate authenticity if Real, or artifacts if Fake. "
@@ -155,14 +162,14 @@ class LLMAdapter:
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
 
-    def get_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
-        return self.provider.generate_explanation(prediction, confidence, model_used, image_reference, heatmap_reference)
+    def get_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
+        return self.provider.generate_explanation(prediction, confidence, model_used, image_reference, heatmap_reference, pipeline_context)
 
 # ==========================================
 # CONFIGURATION
 # 1-Line switch: Change "gemini" to "llama" to switch standard LLM provider.
 # ==========================================
-ACTIVE_PROVIDER = "gemini"
+ACTIVE_PROVIDER = "llama"
 
 # Singleton instance for easy import across backend files
 llm_service = LLMAdapter(ACTIVE_PROVIDER)

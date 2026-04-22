@@ -6,3 +6,5 @@ pillow
 numpy
 opencv-python
 huggingface_hub
+facenet-pytorch
+mediapipe

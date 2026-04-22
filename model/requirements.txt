@@ -132,3 +132,6 @@ wrapt
 xarray
 zipp
 zstandard
+
+facenet-pytorch
+mediapipe
