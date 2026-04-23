@@ -44,7 +44,7 @@ W_CNN = 0.85             # Weight for CNN/ViT confidence
 W_GEOM = 0.15            # Weight for geometry anomaly score
 THRESH_DEEPFAKE = 0.70
 THRESH_SUSPICIOUS = 0.50
-MIN_FACE_AREA = 32 * 32  # Skip faces smaller than 32x32 px
+MIN_FACE_AREA = 80 * 80  # Skip faces smaller than 80x80 px to reduce background artifacting
 
 # MediaPipe landmark indices (Face Mesh 468-point model)
 LEFT_EYE_CORNERS = (33, 133)
@@ -125,7 +125,7 @@ class DeepfakePipeline:
 
         faces = []
         for i, (box, prob) in enumerate(zip(boxes, probs)):
-            if prob is None or prob < 0.5:
+            if prob is None or prob < 0.85:  # Increased threshold to filter out background false positives
                 continue
             x1, y1, x2, y2 = box
             if x2 <= x1 or y2 <= y1:
@@ -355,8 +355,12 @@ class DeepfakePipeline:
         # --- fallback: use whole image when no face detected ---
         if not detected:
             logger.info("No faces detected — running model on full image")
-            label, conf = self.predict_model(image)
-            fused, geom_s = self.fuse_scores(label, conf, {"eye_asymmetry": 0.0, "lip_distance": 0.0})
+            probs_dict = self.predict_model(image)
+            fake_prob = probs_dict["fake_prob"]
+            label = "Fake" if probs_dict["fake_prob"] > probs_dict["real_prob"] else "Real"
+            conf = max(probs_dict["fake_prob"], probs_dict["real_prob"])
+            
+            fused, geom_s = self.fuse_scores(fake_prob, {"eye_asymmetry": 0.0, "lip_distance": 0.0})
             face_verdict = self.face_verdict_from_score(fused)
             face_results = [{
                 "face_id": 0,
@@ -367,6 +371,7 @@ class DeepfakePipeline:
                 "geom_score": geom_s,
                 "fused_score": fused,
                 "geometry": {"eye_asymmetry": 0.0, "lip_distance": 0.0},
+                "mtcnn_conf": 1.0,  # Fallback quality for full image
             }]
             final_label, final_score = self.aggregate_faces(face_results)
             return {
@@ -417,6 +422,7 @@ class DeepfakePipeline:
                 "real_prob": round(real_prob, 4),
                 "geom_score": geom_s,
                 "fused_score": fused,
+                "mtcnn_conf": round(det.get("confidence", 1.0), 4),
                 "geometry": geom_feats,
             })
 

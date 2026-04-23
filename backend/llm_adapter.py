@@ -2,7 +2,7 @@ import os
 import json
 
 class LLMProvider:
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         raise NotImplementedError
 
 
@@ -54,7 +54,7 @@ class GeminiProvider(LLMProvider):
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         image_info = image_reference or "<original image data provided>"
         heatmap_info = heatmap_reference or "<attention heatmap generated>"
 
@@ -63,10 +63,21 @@ class GeminiProvider(LLMProvider):
             if pipeline_context else ""
         )
 
+        stance_text = ""
+        if suggested_llm_stance == "manipulation":
+            stance_text = "Emphasize detected synthetic artifacts, geometric anomalies, and unnatural textures discovered in the signal."
+        elif suggested_llm_stance == "authentic":
+            stance_text = "Emphasize natural geometry, consistent structural integrity, and normal skin transitions found in the signal."
+        elif "ambiguity" in suggested_llm_stance:
+            if "insufficient_data" in suggested_llm_stance:
+                stance_text = "The model is uncertain due to poor crop quality or insufficient data. Explain that the forensic data quality prevents a robust analysis."
+            else:
+                stance_text = "The model is mathematically uncertain. Neutrally present conflicting evidence on both sides, explaining why the system cannot make a definitive ruling."
+
         prompt = (
             f"You are a deepfake detection forensic system. A face image was analyzed using the {model_used} architecture. "
             f"The model outcome is '{prediction}' with {confidence}% confidence.{face_block} "
-            f"Your task is to explain WHY the model made this prediction based on the visual evidence in the provided original image and heatmap (if available). "
+            f"Your task is to explain WHY the model made this prediction based on the visual evidence in the provided original image and heatmap (if available). {stance_text} "
             f"Do NOT contradict the model's outcome. "
             f"Ignore providing URLs. Use only brief technical detail. "
             f"Focus on image regions (face landmarks, edges, textures) and heatmap cues. "
@@ -118,7 +129,7 @@ class LlamaProvider(LLMProvider):
             print(f"Llama init error: {e}")
             self.client = None
 
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         if self.client is None:
             print("Llama client unavailable, using fallback")
             return build_fallback_explanation(prediction, confidence, model_used, image_reference, heatmap_reference)
@@ -128,9 +139,21 @@ class LlamaProvider(LLMProvider):
             if pipeline_context else ""
         )
 
+        stance_text = ""
+        if suggested_llm_stance == "manipulation":
+            stance_text = "Emphasize detected synthetic artifacts, geometric anomalies, and unnatural textures discovered in the signal."
+        elif suggested_llm_stance == "authentic":
+            stance_text = "Emphasize natural geometry, consistent structural integrity, and normal skin transitions found in the signal."
+        elif "ambiguity" in suggested_llm_stance:
+            if "insufficient_data" in suggested_llm_stance:
+                stance_text = "The model is uncertain due to poor crop quality or insufficient data. Explain that the forensic data quality prevents a robust analysis."
+            else:
+                stance_text = "The model is mathematically uncertain. Neutrally present conflicting evidence on both sides, explaining why the system cannot make a definitive ruling."
+
         prompt = (
             f"You are a deepfake detection forensic system. A face image was analyzed using the {model_used} architecture. "
             f"The model outcome is '{prediction}' with {confidence}% confidence.{face_block} "
+            f"{stance_text} "
             f"Ignore providing URLs. Use only brief technical detail. "
             f"Focus on image regions (face landmarks, edges, textures) and heatmap cues. "
             f"For '{prediction}' prediction, choose suspicious_domains that indicate authenticity if Real, or artifacts if Fake. "
@@ -170,8 +193,8 @@ class LLMAdapter:
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
 
-    def get_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None):
-        return self.provider.generate_explanation(prediction, confidence, model_used, image_reference, heatmap_reference, pipeline_context)
+    def get_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
+        return self.provider.generate_explanation(prediction, confidence, model_used, image_reference, heatmap_reference, pipeline_context, suggested_llm_stance)
 
 # ==========================================
 # CONFIGURATION

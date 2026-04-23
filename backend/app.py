@@ -594,7 +594,6 @@ def detect_deepfake():
         # Step 3 — Apply Contextual Fusion & Map Labels
         # ================================================================
         face_list   = pipeline_result["faces"]
-        face_specific_score = pipeline_result["confidence"]     # [0, 1]
         
         outside_fraction = 0.0
 
@@ -612,19 +611,77 @@ def detect_deepfake():
                 outside_attention = float(mask[~face_mask].sum())
                 outside_fraction = outside_attention / total_attention
 
-        # Contextual Skew Fusion (70-30 bounds)
-        w_global_base = 0.30
-        dynamic_global_w = min(0.45, w_global_base + (outside_fraction * 0.20))
-        dynamic_face_w = 1.0 - dynamic_global_w
-        
-        if len(face_list) == 0:
-            # Fallback if no faces found
-            final_score = global_fake_prob
-        else:
-            final_score = (dynamic_face_w * face_specific_score) + (dynamic_global_w * global_fake_prob)
+        def logit(p, eps=1e-6):
+            p = np.clip(p, eps, 1.0 - eps)
+            return np.log(p / (1.0 - p))
 
+        def sigmoid(x):
+            return 1.0 / (1.0 + np.exp(-x))
+
+        def dynamic_weight_gate(crop_quality, base_local=0.70):
+            # Adjusts w_local down if crop quality is low
+            w_local = 0.45 + (base_local - 0.45) * crop_quality
+            return w_local, 1.0 - w_local
+
+        logit_global = logit(global_fake_prob)
+
+        final_score = global_fake_prob
+        is_uncertain = False
+        face_context_lines = []
+
+        if len(face_list) > 0:
+            fused_scores = []
+            any_uncertain = False
+            
+            for f in face_list:
+                fp = f.get('fake_prob', 0.5)
+                rp = f.get('real_prob', 0.5)
+                crop_quality = f.get('mtcnn_conf', 1.0)
+                geo_anomaly_score = f.get('geom_score', 0.0)
+                
+                w_local, w_global = dynamic_weight_gate(crop_quality)
+                logit_local = logit(fp)
+                
+                # Calibration bias: Quality suppression + Geometry boost
+                bias = (geo_anomaly_score - 0.5) * 0.3 - (1.0 - crop_quality) * 0.4
+                
+                fused_logit = w_local * logit_local + w_global * logit_global + bias
+                face_fused_score = float(sigmoid(fused_logit))
+                fused_scores.append(face_fused_score)
+                f['fused_score'] = round(face_fused_score, 4)
+                
+                confidence_gap = abs(fp - rp)
+                
+                # Per-face uncertainty logic
+                f_uncertain = False
+                if confidence_gap < 0.10: f_uncertain = True
+                if crop_quality < 0.45: f_uncertain = True
+                if (fp > 0.5) != (geo_anomaly_score > 0.5) and geo_anomaly_score > 0.0:
+                    f_uncertain = True
+                    
+                if f_uncertain:
+                    any_uncertain = True
+                
+                geom = f["geometry"]
+                face_context_lines.append(
+                    f"Face {f['face_id']}: fused={face_fused_score:.2f} "
+                    f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%), "
+                    f"crop_quality={crop_quality:.2f}, "
+                    f"eye_asym={geom['eye_asymmetry']:.3f}, "
+                    f"lip_dist={geom['lip_distance']:.1f}px"
+                )
+                
+            sorted_fused = sorted(fused_scores, reverse=True)
+            final_score = float(np.mean(sorted_fused[:2]))
+            
+            if any_uncertain or abs(final_score - 0.5) < 0.10:
+                is_uncertain = True
+        else:
+            if abs(global_fake_prob - 0.5) < 0.10:
+                is_uncertain = True
+        
         # Enforce global uncertainty band and label mapping
-        if abs(final_score - 0.50) < 0.10:
+        if is_uncertain:
             final_label = "Uncertain"
         elif final_score >= 0.70:
             final_label = "Deepfake"
@@ -633,7 +690,7 @@ def detect_deepfake():
         else:
             final_label = "Real"
 
-        # Legacy 'prediction' field the frontend expects (Fake / Suspicious / Real / Uncertain)
+        # Legacy 'prediction' field
         if final_label == "Deepfake":
             final_prediction = "Fake"
         elif final_label == "Suspicious":
@@ -644,37 +701,38 @@ def detect_deepfake():
             final_prediction = "Real"
 
         conf_pct = round(final_score * 100, 2)
-        skew_str = f", skew=[Face:{dynamic_face_w*100:.0f}%|Global:{dynamic_global_w*100:.0f}%] (out_frac={outside_fraction:.2f})" 
-        print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)}{skew_str}")
+        print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)} (out_frac={outside_fraction:.2f})")
 
         # ================================================================
-        # Step 4 — Build per-face context for LLM and fallback text
+        # Step 4 — Build per-face context for LLM
         # ================================================================
-        face_lines = []
-        for f in face_list:
-            geom = f["geometry"]
-            fp, rp = f.get('fake_prob', 0), f.get('real_prob', 0)
-            face_lines.append(
-                f"Face {f['face_id']}: verdict={f['face_verdict']} "
-                f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%, fused={f['fused_score']:.2f}), "
-                f"eye_asymmetry={geom['eye_asymmetry']:.3f}, "
-                f"lip_distance={geom['lip_distance']:.1f}px"
-            )
-        
-        ctx_str = "\n".join(face_lines) or "No individual face data."
-        ctx_str += f"\n\n[GLOBAL METRIC] Overall score was fused with a {dynamic_face_w*100:.1f}% priority skew toward isolated facial anomalies and a {dynamic_global_w*100:.1f}% allowance for global/background anomalies (Total Out-of-bounds attention: {outside_fraction*100:.1f}%). Global baseline fake probability was {global_fake_prob*100:.1f}%."
+        ctx_str = "\n".join(face_context_lines) or "No individual face data."
+        ctx_str += f"\n\n[GLOBAL METRIC] Overall score was computed in logit-space with dynamic gating. Global baseline fake probability was {global_fake_prob*100:.1f}%."
         face_context = ctx_str
+
+        # Generate suggested LLM stance
+        suggested_llm_stance = "ambiguity"
+        if is_uncertain:
+            if len(face_list) > 0 and all(f.get('mtcnn_conf', 1.0) < 0.45 for f in face_list):
+                suggested_llm_stance = "ambiguity_due_to_insufficient_data"
+            else:
+                suggested_llm_stance = "ambiguity"
+        elif final_prediction in ["Fake", "Suspicious"]:
+            suggested_llm_stance = "manipulation"
+        else:
+            suggested_llm_stance = "authentic"
 
         fallback_explanation = (
             f"Analysis of {len(face_list)} face(s): "
             + ("Anomalous facial geometry and texture artifacts were detected, consistent with synthetic generation."
                if final_prediction in ("Fake", "Suspicious")
-               else "Statistically consistent biological patterns and lighting transitions were observed.")
+               else ("Statistically consistent biological patterns and lighting transitions were observed."
+                     if final_prediction == "Real" else "Insufficient or ambiguous data led to uncertain verification."))
         )
         fallback_suspicious_domains = (
             ["Periorbital margin", "Mandibular texture", "Eye asymmetry"]
             if final_prediction in ("Fake", "Suspicious")
-            else ["Natural eye geometry", "Consistent skin tone", "Symmetric facial structure"]
+            else (["Natural eye geometry", "Consistent skin tone", "Symmetric facial structure"] if final_prediction == "Real" else ["Image artifacts", "Occlusion"])
         )
         fallback_model_consensus = (
             f"Multi-face analysis across {len(face_list)} face(s) via geometry-augmented ViT forensic protocol."
@@ -691,6 +749,7 @@ def detect_deepfake():
                 image_reference=image,
                 heatmap_reference=Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)) if overlay is not None else None,
                 pipeline_context=face_context,
+                suggested_llm_stance=suggested_llm_stance,
             )
 
             if isinstance(llm_response, dict):
