@@ -794,5 +794,14 @@ def detect_deepfake():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+# Pre-load the default model on startup to reduce user wait time
+with app.app_context():
+    try:
+        print("Pre-loading default model (ViT)...")
+        get_model("ViT")
+    except Exception as e:
+        print(f"Warning: Failed to pre-load model on startup: {e}")
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', debug=True, port=5000)

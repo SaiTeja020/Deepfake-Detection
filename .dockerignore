@@ -1,11 +1,21 @@
 node_modules
 .git
 .gitignore
-backend/.venv
-.venv
-backend/__pycache__
 dist
 build
 .DS_Store
 *.log
 README.md
+
+# Large directories to exclude from frontend context
+backend/
+model/
+Gradio_app/
+deep-research-report.md
+
+# Python virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+backend/__pycache__/

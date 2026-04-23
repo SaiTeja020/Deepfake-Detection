@@ -10,12 +10,22 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Optimize: Copy requirements first to leverage Docker layer caching
+COPY requirements.txt .
+
+# Create virtual environment and install dependencies during build
+ENV VIRTUAL_ENV=/app/.venv
+RUN uv venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Pre-install dependencies (using CPU torch to keep image size manageable)
+RUN uv pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+
 # Copy the rest of the application code
 COPY . .
 RUN chmod +x /app/entrypoint.sh
 
 ENV UV_CACHE_DIR=/root/.cache/uv
-ENV VIRTUAL_ENV=/app/.venv
 ENV PATH="/app/.venv/bin:/root/.local/bin:${PATH}"
 
 # Expose Flask default port
