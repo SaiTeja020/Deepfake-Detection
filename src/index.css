@@ -75,15 +75,24 @@ body {
 
 .card-foresight {
     border-radius: var(--radius-xl);
-    border: 1px solid var(--border-light);
-    background: var(--bg-light);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    background: rgba(248, 250, 252, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow: 
+        8px 8px 16px rgba(0, 0, 0, 0.04),
+        -8px -8px 16px rgba(255, 255, 255, 0.8);
     transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 [data-theme='dark'] .card-foresight {
-    border-color: var(--border-dark);
-    background: rgba(9, 9, 11, 0.8);
-    backdrop-filter: blur(16px);
+    border-color: rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    box-shadow: 
+        0 8px 32px 0 rgba(0, 0, 0, 0.5),
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
 .btn-primary {
@@ -139,6 +148,26 @@ body {
         opacity: 0;
         transform: scale(0.95);
     }
+}
+
+/* Kaggle-style Blob Animations */
+@keyframes blob {
+  0% { transform: translate(0px, 0px) scale(1); }
+  33% { transform: translate(30px, -50px) scale(1.1); }
+  66% { transform: translate(-20px, 20px) scale(0.9); }
+  100% { transform: translate(0px, 0px) scale(1); }
+}
+
+.animate-blob {
+  animation: blob 10s infinite alternate cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.animation-delay-2000 {
+  animation-delay: 2s;
+}
+
+.animation-delay-4000 {
+  animation-delay: 4s;
 }
 
 /* Profile Redesign Utilities */
@@ -289,14 +318,19 @@ body {
     }
 }
 
-/* Enhanced Interactions */
 .card-foresight:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+    box-shadow: 
+        12px 12px 24px rgba(0, 0, 0, 0.06),
+        -12px -12px 24px rgba(255, 255, 255, 1);
 }
 
 [data-theme="dark"] .card-foresight:hover {
-    box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: 
+        0 12px 40px 0 rgba(0, 0, 0, 0.6),
+        inset 0 1px 0 0 rgba(255, 255, 255, 0.1);
 }
 
 .interactive-element:focus-visible {

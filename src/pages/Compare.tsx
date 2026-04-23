@@ -101,17 +101,23 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
             <p className={`text-[10px] font-mono font-bold text-blue-500/50 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{result.inferenceTime}ms</p>
           </div>
 
-          <div 
+          <motion.div 
+            layoutId={`heatmap-container-${modelName}`}
             onClick={() => result && setZoomedImage({ url: result.attentionMapUrl, model: modelName })}
-            className={`aspect-video rounded-2xl overflow-hidden border cursor-zoom-in group/heatmap ${isDark ? 'bg-black border-zinc-800' : 'bg-slate-50 border-slate-100'}`}
+            className={`aspect-video rounded-2xl overflow-hidden border cursor-zoom-in group/heatmap relative ${isDark ? 'bg-black border-zinc-800' : 'bg-slate-50 border-slate-100'}`}
           >
-            <img src={result.attentionMapUrl} className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" alt={`${modelName} Heatmap`} />
+            <motion.img 
+              layoutId={`heatmap-img-${modelName}`}
+              src={result.attentionMapUrl} 
+              className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" 
+              alt={`${modelName} Heatmap`} 
+            />
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/heatmap:opacity-100 transition-opacity bg-black/20">
               <div className="p-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
                 <EyeIcon className="w-6 h-6" />
               </div>
             </div>
-          </div>
+          </motion.div>
 
           <div className="space-y-4">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 heading-font">Forensic Signature</h4>
@@ -131,8 +137,8 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
   );
 
   return (
-    <div className="space-y-12 fade-in">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-zinc-900/10 pb-8">
+    <div className="space-y-12 fade-in relative">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-zinc-900/10 pb-8 relative z-10">
         <div className="space-y-1">
           <h1 className="text-4xl font-black tracking-tighter heading-font">Model Comparison</h1>
           <p className={`text-sm font-light ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Benchmark ViT vs Swin Transformer performance side-by-side.</p>
@@ -251,40 +257,61 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
         )}
       </div>
 
-      {/* Pop-up Heatmap Viewer */}
+      {/* Pop-up Heatmap Viewer (Google Folder Style) */}
       <AnimatePresence>
         {zoomedImage && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-12">
+          <div className="absolute top-20 left-20 z-[60] flex items-center justify-center p-4 md:p-6">
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setZoomedImage(null)}
-              className="absolute inset-0 bg-zinc-950/90 backdrop-blur-sm"
+              className="absolute inset-0 bg-transparent"
             />
             
             <motion.div
-              initial={{ scale: 0.85, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.85, opacity: 0, y: 10 }}
-              className={`relative w-full max-w-5xl aspect-video rounded-[2rem] overflow-hidden border shadow-2xl ${isDark ? 'bg-black border-white/10' : 'bg-white border-slate-200'}`}
+              layoutId={`heatmap-container-${zoomedImage.model}`}
+              className={`relative w-full max-w-2xl rounded-[3.5rem] overflow-hidden border shadow-2xl ${isDark ? 'bg-zinc-900/40 border-white/10' : 'bg-white/40 border-slate-200'} backdrop-blur-3xl`}
             >
-              <img src={zoomedImage.url} className="w-full h-full object-cover" alt="Magnified Heatmap" />
-              
-              {/* Overlay Content */}
-              <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xl font-bold text-white heading-font">{zoomedImage.model} Forensic Heatmap</h3>
-                    <p className="text-zinc-400 text-sm">Full-resolution attention layer analysis.</p>
-                  </div>
-                  <button 
-                    onClick={() => setZoomedImage(null)}
-                    className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all"
-                  >
-                    <XMarkIcon className="w-6 h-6" />
-                  </button>
+              {/* Folder Header */}
+              <div className="px-10 pt-10 pb-6 flex items-center justify-between">
+                <div className="space-y-1">
+                  <h3 className={`text-2xl font-bold heading-font tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>{zoomedImage.model} Analysis</h3>
+                  <p className={`text-[10px] font-bold uppercase tracking-[0.2em] opacity-40 ${isDark ? 'text-white' : 'text-slate-900'}`}>Forensic Attention Map</p>
                 </div>
+                <button 
+                  onClick={() => setZoomedImage(null)}
+                  className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isDark ? 'bg-white/5 border border-white/10 text-white hover:bg-white/10' : 'bg-black/5 border border-black/10 text-slate-900 hover:bg-black/10'}`}
+                >
+                  <XMarkIcon className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="px-10 pb-10">
+                <div className={`relative rounded-[2.5rem] overflow-hidden border shadow-inner ${isDark ? 'border-white/5 bg-black/20' : 'border-black/5 bg-white/20'}`}>
+
+                  <motion.img 
+                    layoutId={`heatmap-img-${zoomedImage.model}`}
+                    src={zoomedImage.url} 
+                    className="w-full h-full object-contain" 
+                    alt="Magnified Heatmap" 
+                  />
+                  
+                  {/* Subtle Corner Accents */}
+                  <div className="absolute top-6 left-6 w-2 h-2 rounded-full bg-blue-500/40 blur-[1px]" />
+                  <div className="absolute top-6 right-6 w-2 h-2 rounded-full bg-blue-500/40 blur-[1px]" />
+                </div>
+
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.2 }}
+                  className="mt-8 flex items-center justify-center gap-4"
+                >
+                   <div className="h-px w-8 bg-current opacity-10" />
+                   <p className={`text-[9px] font-black uppercase tracking-[0.3em] opacity-30 ${isDark ? 'text-white' : 'text-slate-900'}`}>Secure Biometric Scan</p>
+                   <div className="h-px w-8 bg-current opacity-10" />
+                </motion.div>
               </div>
             </motion.div>
           </div>

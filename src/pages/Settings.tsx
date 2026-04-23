@@ -12,6 +12,7 @@ import { signOut, updatePassword, deleteUser } from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../context/AuthContext";
 import { syncUser } from "../services/api";
+import NeuralMesh from "../components/NeuralMesh";
 
 interface SettingsProps {
     theme: 'dark' | 'light' | 'system';
@@ -84,8 +85,10 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
     const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false); // Second step
 
     return (
-        <div className="w-full max-w-3xl mx-auto py-12 px-6 fade-in">
-            <header className="mb-14">
+        <>
+            <NeuralMesh isDark={activeTheme === 'dark'} noLines={true} />
+            <div className="w-full max-w-3xl mx-auto py-12 px-6 fade-in relative">
+                <header className="mb-14 relative z-10">
                 <h1 className="text-3xl font-bold tracking-tight text-blue-900 dark:text-blue-200 mb-2">Settings</h1>
                 <p className="text-sm text-blue-600 dark:text-blue-500">Manage your account and platform preferences.</p>
             </header>
@@ -425,7 +428,8 @@ const Settings: React.FC<SettingsProps> = ({ theme, setTheme, activeTheme }) => 
                 </div>
             </Modal>
 
-        </div>
+            </div>
+        </>
     );
 };
 

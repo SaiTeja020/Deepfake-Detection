@@ -2,9 +2,10 @@ import React, { useEffect, useRef } from 'react';
 
 interface NeuralMeshProps {
   isDark: boolean;
+  noLines?: boolean;
 }
 
-const NeuralMesh: React.FC<NeuralMeshProps> = ({ isDark }) => {
+const NeuralMesh: React.FC<NeuralMeshProps> = ({ isDark, noLines = false }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -84,7 +85,7 @@ const NeuralMesh: React.FC<NeuralMeshProps> = ({ isDark }) => {
           const dy = p.y - p2.y;
           const distance = Math.sqrt(dx * dx + dy * dy);
 
-          if (distance < connectionRadius) {
+          if (!noLines && distance < connectionRadius) {
             // Very subtle connections
             const opacity = (1 - distance / connectionRadius) * (isDark ? 0.4 : 0.35);
             ctx.beginPath();

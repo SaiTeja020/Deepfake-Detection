@@ -9,7 +9,9 @@ import {
    FunnelIcon,
    PencilIcon,
    XMarkIcon,
-   CameraIcon
+   CameraIcon,
+   ChevronLeftIcon,
+   ChevronRightIcon
 } from '@heroicons/react/24/outline';
 import { ModelType } from '../types';
 import { useAuth } from '../context/AuthContext';
@@ -184,6 +186,8 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const isDark = theme === 'dark';
    const { user: firebaseUser, profile, refreshProfile } = useAuth();
    const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
+   const [currentPage, setCurrentPage] = useState(1);
+   const ITEMS_PER_PAGE = 10;
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
    const [user, setUser] = useState({
       name: 'John Doe',
@@ -211,9 +215,12 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
             try {
                const data = await getScanHistory(firebaseUser.uid);
                if (Array.isArray(data)) {
+                  // Sort by newest first
+                  const sorted = [...data].sort((a, b) => 
+                     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                  );
                   // Format data to match table structure
-                  // Assuming backend columns: id, file_name, result, confidence, model_used, created_at
-                  const formatted = data.map(item => ({
+                  const formatted = sorted.map(item => ({
                      id: item.id,
                      date: new Date(item.created_at).toLocaleDateString(),
                      name: item.file_name || 'Unknown',
@@ -235,6 +242,9 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       if (filter === 'all') return true;
       return item.result.toLowerCase() === filter;
    });
+
+   const totalPages = Math.ceil(filteredHistory.length / ITEMS_PER_PAGE);
+   const paginatedHistory = filteredHistory.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
 
    // Calculate real stats based on history
    const totalAnalyzed = history.length;
@@ -304,7 +314,11 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
    return (
       <div className="relative min-h-screen pb-20 overflow-x-hidden">
-         {/* Background elements removed */}
+         {/* Background Ambient Glows */}
+         <div className="fixed inset-0 overflow-hidden pointer-events-none">
+            <div className={`absolute -top-[5%] -right-[10%] w-[25%] h-[25%] rounded-full blur-[120px] opacity-30 mix-blend-screen animate-blob ${isDark ? 'bg-emerald-500' : 'bg-emerald-300'}`} />
+            <div className={`absolute top-[40%] -left-[10%] w-[25%] h-[25%] rounded-full blur-[100px] opacity-30 mix-blend-screen animate-blob animation-delay-2000 ${isDark ? 'bg-blue-500' : 'bg-blue-300'}`} />
+         </div>
 
          <div className="space-y-24 fade-in relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             {/* User Info Header */}
@@ -389,7 +403,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                         {(['all', 'real', 'fake'] as const).map((opt) => (
                            <button
                               key={opt}
-                              onClick={() => setFilter(opt)}
+                              onClick={() => { setFilter(opt); setCurrentPage(1); }}
                               className={`px-5 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all duration-300 ${filter === opt ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/30' : 'opacity-40 hover:opacity-100'}`}
                            >
                               {opt}
@@ -412,7 +426,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                            </tr>
                         </thead>
                         <tbody>
-                           {filteredHistory.map((row) => (
+                           {paginatedHistory.map((row) => (
                               <tr key={row.id} className="group transition-all duration-300">
                                  <td className={`font-medium ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{row.date}</td>
                                  <td className="font-bold tracking-tight text-sm">{row.name}</td>
@@ -442,6 +456,37 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                         </tbody>
                      </table>
                   </div>
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                     <div className="mt-10 flex items-center justify-center gap-6 border-t border-zinc-900/5 dark:border-white/5 pt-10">
+                        <button
+                           onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                           disabled={currentPage === 1}
+                           className={`p-2.5 rounded-xl border transition-all ${currentPage === 1 
+                              ? 'opacity-20 cursor-not-allowed' 
+                              : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
+                        >
+                           <ChevronLeftIcon className="w-5 h-5" />
+                        </button>
+                        
+                        <div className="flex items-center gap-2">
+                           <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
+                              Page {currentPage} of {totalPages}
+                           </span>
+                        </div>
+
+                        <button
+                           onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                           disabled={currentPage === totalPages}
+                           className={`p-2.5 rounded-xl border transition-all ${currentPage === totalPages 
+                              ? 'opacity-20 cursor-not-allowed' 
+                              : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
+                        >
+                           <ChevronRightIcon className="w-5 h-5" />
+                        </button>
+                     </div>
+                  )}
                </div>
             </section>
          </div>

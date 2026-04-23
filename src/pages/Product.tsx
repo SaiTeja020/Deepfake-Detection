@@ -187,8 +187,8 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   };
 
   return (
-    <div className="space-y-12 fade-in">
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-zinc-900/10 pb-8">
+    <div className="space-y-12 fade-in relative">
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-zinc-900/10 pb-8 relative z-10">
         <div className="space-y-1">
           <h1 className="text-4xl font-black tracking-tighter heading-font">Facial Analysis</h1>
           <p className={`text-sm font-light ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Verify biometric authenticity via transformer-based forensics.</p>
