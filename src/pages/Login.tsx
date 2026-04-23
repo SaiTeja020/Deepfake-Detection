@@ -9,6 +9,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { auth } from '../firebase';
 import { syncUser } from '../services/api';
+import NeuralMesh from '../components/NeuralMesh';
 
 const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ theme, onLogin }) => {
   const navigate = useNavigate();
@@ -38,18 +39,22 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
   return (
     <div className={`min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 transition-colors duration-500 ${isDark ? 'bg-[#050505]' : 'bg-slate-50'}`}>
 
+      {/* Animated Mesh Background */}
+      <NeuralMesh isDark={isDark} />
+
       {/* Background Ambient Glows */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full blur-[120px] opacity-20 ${isDark ? 'bg-blue-600' : 'bg-blue-200'}`} />
-        <div className={`absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] rounded-full blur-[120px] opacity-10 ${isDark ? 'bg-purple-600' : 'bg-purple-200'}`} />
+        <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full blur-[120px] opacity-15 ${isDark ? 'bg-blue-600' : 'bg-blue-200'}`} />
+        <div className={`absolute -top-[5%] -right-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-purple-600' : 'bg-purple-200'}`} />
+        <div className={`absolute -bottom-[10%] -left-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
       </div>
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, ease: "easeOut" }}
-        className={`relative w-full max-w-lg overflow-hidden rounded-[2rem] border backdrop-blur-xl shadow-2xl 
-          ${isDark ? 'bg-zinc-900/40 border-white/10 shadow-black' : 'bg-white/80 border-slate-200 shadow-slate-200/50'}`}
+        className={`relative w-full max-w-lg overflow-hidden rounded-[2.5rem] border backdrop-blur-lg shadow-[0_20px_50px_rgba(0,0,0,0.1)] 
+          ${isDark ? 'bg-zinc-900/40 border-white/10 shadow-black' : 'bg-white/70 border-white/60 shadow-slate-200/50'}`}
       >
         {/* Decorative Top Accent */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-50" />

@@ -15,6 +15,8 @@ import cv2
 from transformers import AutoImageProcessor, AutoModelForImageClassification, ViTImageProcessor, SwinForImageClassification, ViTForImageClassification
 from huggingface_hub import hf_hub_download
 import traceback
+import threading
+import time
 from PIL import Image
 import torchvision.transforms as transforms
 from pipeline import DeepfakePipeline
@@ -795,13 +797,19 @@ def detect_deepfake():
         return jsonify({"error": str(e)}), 500
 
 
-# Pre-load the default model on startup to reduce user wait time
-with app.app_context():
-    try:
-        print("Pre-loading default model (ViT)...")
-        get_model("ViT")
-    except Exception as e:
-        print(f"Warning: Failed to pre-load model on startup: {e}")
+def background_preload():
+    # Small delay to allow the server to fully bind and start accepting requests
+    time.sleep(2)
+    with app.app_context():
+        try:
+            print("Background pre-loading default model (ViT)...")
+            get_model("ViT")
+        except Exception as e:
+            print(f"Warning: Failed to pre-load model in background: {e}")
 
 if __name__ == '__main__':
+    # Only run pre-loading in the actual reloader main process to avoid double-loading
+    if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:
+        threading.Thread(target=background_preload, daemon=True).start()
+    
     app.run(host='0.0.0.0', debug=True, port=5000)

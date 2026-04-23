@@ -12,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { auth } from "../firebase";
 import { syncUser } from "../services/api";
+import NeuralMesh from '../components/NeuralMesh';
 
 const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     const navigate = useNavigate();
@@ -70,31 +71,21 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     return (
         <div className={`min-h-screen w-full flex items-center justify-center p-4 sm:p-8 transition-colors duration-500 ${isDark ? 'bg-[#050505]' : 'bg-slate-50'}`}>
 
+            {/* Animated Mesh Background */}
+            <NeuralMesh isDark={isDark} />
+
             {/* Dynamic Mesh Gradient Background */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <motion.div
-                    animate={{
-                        scale: [1, 1.2, 1],
-                        rotate: [0, 90, 0],
-                    }}
-                    transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-                    className={`absolute top-[-20%] right-[-10%] w-[60%] h-[60%] rounded-full blur-[120px] opacity-20 ${isDark ? 'bg-blue-900' : 'bg-blue-100'}`}
-                />
-                <motion.div
-                    animate={{
-                        scale: [1, 1.3, 1],
-                        rotate: [0, -90, 0],
-                    }}
-                    transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-                    className={`absolute bottom-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full blur-[120px] opacity-15 ${isDark ? 'bg-indigo-900' : 'bg-indigo-100'}`}
-                />
+                <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full blur-[120px] opacity-15 ${isDark ? 'bg-blue-600' : 'bg-blue-200'}`} />
+                <div className={`absolute -top-[5%] -right-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-purple-600' : 'bg-purple-200'}`} />
+                <div className={`absolute -bottom-[10%] -left-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
             </div>
 
             <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className={`relative w-full max-w-2xl overflow-hidden rounded-[2.5rem] border backdrop-blur-2xl shadow-2xl 
-          ${isDark ? 'bg-zinc-900/60 border-white/10' : 'bg-white/70 border-white shadow-slate-200/50'}`}
+                className={`relative w-full max-w-2xl overflow-hidden rounded-[2.5rem] border backdrop-blur-lg shadow-[0_20px_50px_rgba(0,0,0,0.1)] 
+          ${isDark ? 'bg-zinc-900/40 border-white/10' : 'bg-white/70 border-white shadow-slate-200/50'}`}
             >
                 <div className="flex flex-col md:flex-row">
                     {/* Left Side: Branding/Value Prop */}

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { ModelType, DetectionResult } from '../types';
 import { detectDeepfake } from '../services/api';
 import { auth } from '../firebase';
@@ -21,6 +22,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
   const [vitResult, setVitResult] = useState<DetectionResult | null>(null);
   const [swinResult, setSwinResult] = useState<DetectionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [zoomedImage, setZoomedImage] = useState<{ url: string; model: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleReset = () => {
@@ -99,8 +101,16 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
             <p className={`text-[10px] font-mono font-bold text-blue-500/50 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{result.inferenceTime}ms</p>
           </div>
 
-          <div className={`aspect-video rounded-2xl overflow-hidden border ${isDark ? 'bg-black border-zinc-900' : 'bg-slate-50 border-slate-100'}`}>
-            <img src={result.attentionMapUrl} className="w-full h-full object-cover grayscale opacity-30 hover:grayscale-0 hover:opacity-100 transition-all duration-700" alt={`${modelName} Heatmap`} />
+          <div 
+            onClick={() => result && setZoomedImage({ url: result.attentionMapUrl, model: modelName })}
+            className={`aspect-video rounded-2xl overflow-hidden border cursor-zoom-in group/heatmap ${isDark ? 'bg-black border-zinc-800' : 'bg-slate-50 border-slate-100'}`}
+          >
+            <img src={result.attentionMapUrl} className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" alt={`${modelName} Heatmap`} />
+            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/heatmap:opacity-100 transition-opacity bg-black/20">
+              <div className="p-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
+                <EyeIcon className="w-6 h-6" />
+              </div>
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -240,6 +250,46 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
           </div>
         )}
       </div>
+
+      {/* Pop-up Heatmap Viewer */}
+      <AnimatePresence>
+        {zoomedImage && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-12">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setZoomedImage(null)}
+              className="absolute inset-0 bg-zinc-950/90 backdrop-blur-sm"
+            />
+            
+            <motion.div
+              initial={{ scale: 0.85, opacity: 0, y: 10 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.85, opacity: 0, y: 10 }}
+              className={`relative w-full max-w-5xl aspect-video rounded-[2rem] overflow-hidden border shadow-2xl ${isDark ? 'bg-black border-white/10' : 'bg-white border-slate-200'}`}
+            >
+              <img src={zoomedImage.url} className="w-full h-full object-cover" alt="Magnified Heatmap" />
+              
+              {/* Overlay Content */}
+              <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold text-white heading-font">{zoomedImage.model} Forensic Heatmap</h3>
+                    <p className="text-zinc-400 text-sm">Full-resolution attention layer analysis.</p>
+                  </div>
+                  <button 
+                    onClick={() => setZoomedImage(null)}
+                    className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all"
+                  >
+                    <XMarkIcon className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
