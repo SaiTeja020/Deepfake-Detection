@@ -700,7 +700,12 @@ def detect_deepfake():
         else:
             final_prediction = "Real"
 
-        conf_pct = round(final_score * 100, 2)
+        if final_prediction == "Real":
+            display_score = 1.0 - final_score
+        else:
+            display_score = final_score
+
+        conf_pct = round(display_score * 100, 2)
         print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)} (out_frac={outside_fraction:.2f})")
 
         # ================================================================

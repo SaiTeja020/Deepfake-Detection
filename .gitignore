@@ -43,3 +43,5 @@ backend/.venv/
 .venv/
 
 backend/test_api.py
+Dataset/
+fake_2.jpg
