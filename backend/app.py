@@ -517,12 +517,23 @@ def detect_deepfake():
 
         end_time = time.time()
         inference_time = int((end_time - start_time) * 1000)
-        predicted_idx = outputs_full.logits.argmax(dim=-1).item() if hasattr(outputs_full, "logits") else 0
-        if hasattr(m.config, 'id2label') and predicted_idx in m.config.id2label:
-            label = m.config.id2label[predicted_idx]
-        else:
-            # Fallback for demo/ImageNet models
-            label = "Real" if predicted_idx % 2 == 0 else "Fake"
+        global_fake_prob = 0.5  # Neutral fallback
+        if hasattr(outputs_full, "logits"):
+            probs_full = torch.softmax(outputs_full.logits, dim=-1).squeeze()
+            if probs_full.dim() == 0: probs_full = probs_full.unsqueeze(0)
+            
+            label2id = getattr(m.config, 'label2id', {})
+            fake_idx = label2id.get("FAKE", 0)
+            real_idx = label2id.get("REAL", 1)
+            
+            # Safely extract full-image macro fake probability
+            try:
+                if len(probs_full) > max(fake_idx, real_idx):
+                    global_fake_prob = float(probs_full[fake_idx].item())
+                else:
+                    global_fake_prob = float(probs_full[0].item()) # Fallback
+            except Exception as e:
+                print(f"Failed to extract global probabilities: {e}")
         
         # Attention rollout for Heatmap
         heatmap_url = None
@@ -580,22 +591,61 @@ def detect_deepfake():
 
 
         # ================================================================
-        # Step 3 — Map pipeline verdict to frontend labels
+        # Step 3 — Apply Contextual Fusion & Map Labels
         # ================================================================
-        final_label = pipeline_result["final_label"]   # Deepfake | Suspicious | Real | NoFaces
-        final_score = pipeline_result["confidence"]     # [0, 1]
         face_list   = pipeline_result["faces"]
+        face_specific_score = pipeline_result["confidence"]     # [0, 1]
+        
+        outside_fraction = 0.0
 
-        # Legacy 'prediction' field the frontend expects (Fake / Suspicious / Real)
+        if 'mask' in locals() and mask is not None and mask.size > 0 and len(face_list) > 0:
+            face_mask = np.zeros(mask.shape, dtype=bool)
+            for f in face_list:
+                x1, y1, x2, y2 = f["box"]
+                x1 = max(0, x1); y1 = max(0, y1)
+                x2 = min(mask.shape[1], x2); y2 = min(mask.shape[0], y2)
+                if x2 > x1 and y2 > y1:
+                    face_mask[y1:y2, x1:x2] = True
+            
+            total_attention = float(mask.sum())
+            if total_attention > 1e-8:
+                outside_attention = float(mask[~face_mask].sum())
+                outside_fraction = outside_attention / total_attention
+
+        # Contextual Skew Fusion (70-30 bounds)
+        w_global_base = 0.30
+        dynamic_global_w = min(0.45, w_global_base + (outside_fraction * 0.20))
+        dynamic_face_w = 1.0 - dynamic_global_w
+        
+        if len(face_list) == 0:
+            # Fallback if no faces found
+            final_score = global_fake_prob
+        else:
+            final_score = (dynamic_face_w * face_specific_score) + (dynamic_global_w * global_fake_prob)
+
+        # Enforce global uncertainty band and label mapping
+        if abs(final_score - 0.50) < 0.10:
+            final_label = "Uncertain"
+        elif final_score >= 0.70:
+            final_label = "Deepfake"
+        elif final_score >= 0.50:
+            final_label = "Suspicious"
+        else:
+            final_label = "Real"
+
+        # Legacy 'prediction' field the frontend expects (Fake / Suspicious / Real / Uncertain)
         if final_label == "Deepfake":
             final_prediction = "Fake"
         elif final_label == "Suspicious":
             final_prediction = "Suspicious"
+        elif final_label == "Uncertain":
+            final_prediction = "Uncertain"
         else:
             final_prediction = "Real"
 
         conf_pct = round(final_score * 100, 2)
-        print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)}")
+        skew_str = f", skew=[Face:{dynamic_face_w*100:.0f}%|Global:{dynamic_global_w*100:.0f}%] (out_frac={outside_fraction:.2f})" 
+        print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)}{skew_str}")
 
         # ================================================================
         # Step 4 — Build per-face context for LLM and fallback text
@@ -603,13 +653,17 @@ def detect_deepfake():
         face_lines = []
         for f in face_list:
             geom = f["geometry"]
+            fp, rp = f.get('fake_prob', 0), f.get('real_prob', 0)
             face_lines.append(
-                f"Face {f['face_id']}: verdict={f['cnn_label']} "
-                f"(cnn={f['cnn_conf']:.2f}, fused={f['fused_score']:.2f}), "
+                f"Face {f['face_id']}: verdict={f['face_verdict']} "
+                f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%, fused={f['fused_score']:.2f}), "
                 f"eye_asymmetry={geom['eye_asymmetry']:.3f}, "
                 f"lip_distance={geom['lip_distance']:.1f}px"
             )
-        face_context = "\n".join(face_lines) or "No individual face data."
+        
+        ctx_str = "\n".join(face_lines) or "No individual face data."
+        ctx_str += f"\n\n[GLOBAL METRIC] Overall score was fused with a {dynamic_face_w*100:.1f}% priority skew toward isolated facial anomalies and a {dynamic_global_w*100:.1f}% allowance for global/background anomalies (Total Out-of-bounds attention: {outside_fraction*100:.1f}%). Global baseline fake probability was {global_fake_prob*100:.1f}%."
+        face_context = ctx_str
 
         fallback_explanation = (
             f"Analysis of {len(face_list)} face(s): "

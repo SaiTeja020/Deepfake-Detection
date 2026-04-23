@@ -22,7 +22,7 @@ if [ -f "${REQ_HASH_FILE}" ]; then
 fi
 
 if [ "${CURRENT_HASH}" != "${SAVED_HASH}" ]; then
-  uv pip install --python "${VENV_PYTHON}" -r "${REQ_FILE}"
+  uv pip install --python "${VENV_PYTHON}" -r "${REQ_FILE}" --extra-index-url https://download.pytorch.org/whl/cpu
   printf "%s" "${CURRENT_HASH}" > "${REQ_HASH_FILE}"
 fi
 

@@ -168,27 +168,29 @@ class DeepfakePipeline:
     # Component 3 – Model Inference                                        #
     # ------------------------------------------------------------------ #
 
-    def predict_model(self, face_crop: Image.Image) -> Tuple[str, float]:
+    def predict_model(self, face_crop: Image.Image) -> Dict[str, float]:
         """
         Run the ViT model on a single face crop.
-
-        Returns:
-            (label, confidence) where label ∈ {"REAL", "FAKE"} and
-            confidence is the probability of the predicted class.
+        Returns explicit probabilities for REAL and FAKE instead of argmax confidence.
         """
         try:
             inputs = self.processor(images=face_crop, return_tensors="pt").to(self.device)
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 logits = outputs.logits
-                probs = torch.softmax(logits, dim=1)
-                confidence, predicted_class = torch.max(probs, dim=1)
-
-            label = self.model.config.id2label[predicted_class.item()]
-            return label, float(confidence.item())
+                probs = torch.softmax(logits, dim=1).squeeze(0)
+                
+            label2id = getattr(self.model.config, 'label2id', {})
+            fake_idx = label2id.get("FAKE", 0)
+            real_idx = label2id.get("REAL", 1)
+            
+            fake_prob = float(probs[fake_idx].item())
+            real_prob = float(probs[real_idx].item())
+            
+            return {"fake_prob": fake_prob, "real_prob": real_prob}
         except Exception as e:
             logger.warning("Model inference failed on face crop: %s", e)
-            return "REAL", 0.0
+            return {"fake_prob": 0.0, "real_prob": 1.0}
 
     # ------------------------------------------------------------------ #
     # Component 4 – Landmark Extraction  (MTCNN 5-point keypoints)         #
@@ -253,23 +255,16 @@ class DeepfakePipeline:
 
     @staticmethod
     def fuse_scores(
-        cnn_label: str,
-        cnn_conf: float,
+        fake_prob: float,
         geom_feats: Dict[str, float],
         w_cnn: float = W_CNN,
         w_geom: float = W_GEOM,
     ) -> Tuple[float, float]:
         """
         Combine CNN deepfake-probability with a geometry anomaly score.
-
-        cnn_conf is the confidence of the *predicted* label.  We need the
-        probability that it is FAKE, so if the label is REAL we invert it.
-
         Returns:
             (fused_score, geom_score) — both in [0, 1].
         """
-        # Normalise to deepfake probability
-        fake_prob = cnn_conf if cnn_label.upper() == "FAKE" else (1.0 - cnn_conf)
         # Geometry anomaly: amplified eye asymmetry, clamped to [0, 1]
         geom_score = min(1.0, geom_feats.get("eye_asymmetry", 0.0) * 3.0)
         fused = w_cnn * fake_prob + w_geom * geom_score
@@ -394,25 +389,32 @@ class DeepfakePipeline:
             crop_w, crop_h = face_crop.size
 
             # ViT inference
-            label, conf = self.predict_model(face_crop)
+            probs_dict = self.predict_model(face_crop)
+            fake_prob = probs_dict["fake_prob"]
+            real_prob = probs_dict["real_prob"]
 
             # Geometry features from MTCNN 5-point keypoints
             geom_feats = self.extract_geometry_features(
                 det.get("kp"), crop_w, crop_h
             )
 
-            # score fusion
-            fused, geom_s = self.fuse_scores(label, conf, geom_feats)
+            # score fusion (using pure fake probability)
+            fused, geom_s = self.fuse_scores(fake_prob, geom_feats)
 
-            # per-face verdict
-            face_verdict = self.face_verdict_from_score(fused)
+            # per-face verdict & Uncertainty checking
+            if abs(fake_prob - real_prob) < 0.10:
+                face_verdict = "Uncertain"
+            else:
+                face_verdict = self.face_verdict_from_score(fused)
 
             face_results.append({
                 "face_id": idx,
                 "box": box,
                 "face_verdict": face_verdict,
-                "cnn_label": label,
-                "cnn_conf": round(conf, 4),
+                "cnn_label": "Fake" if fake_prob > real_prob else "Real",
+                "cnn_conf": round(max(fake_prob, real_prob), 4),
+                "fake_prob": round(fake_prob, 4),
+                "real_prob": round(real_prob, 4),
                 "geom_score": geom_s,
                 "fused_score": fused,
                 "geometry": geom_feats,
