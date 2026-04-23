@@ -102,17 +102,27 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const { profile } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleReset = () => {
+  const handleReset = (immediate = false) => {
     if (isDetecting) return;
-    setIsRemoving(true);
-    setTimeout(() => {
+    
+    const reset = () => {
       setImage(null);
       setResult(null);
       setFileInfo(null);
       setShowHeatmap(false);
       setError(null);
       setIsRemoving(false);
-    }, 300);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+
+    if (immediate) {
+      reset();
+    } else {
+      setIsRemoving(true);
+      setTimeout(reset, 300);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -186,13 +196,23 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
         <div className={`flex p-1 rounded-2xl border ${isDark ? 'bg-zinc-950 border-zinc-900 shadow-inner' : 'bg-slate-100 border-slate-200'}`}>
           <button
-            onClick={() => setSelectedModel(ModelType.ViT)}
+            onClick={() => {
+              if (selectedModel !== ModelType.ViT) {
+                handleReset(true);
+                setSelectedModel(ModelType.ViT);
+              }
+            }}
             className={`px-8 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all ${selectedModel === ModelType.ViT ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/20' : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-slate-500 hover:text-slate-800')}`}
           >
             ViT Architecture
           </button>
           <button
-            onClick={() => setSelectedModel(ModelType.Swin)}
+            onClick={() => {
+              if (selectedModel !== ModelType.Swin) {
+                handleReset(true);
+                setSelectedModel(ModelType.Swin);
+              }
+            }}
             className={`px-8 py-2.5 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all ${selectedModel === ModelType.Swin ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/20' : (isDark ? 'text-zinc-600 hover:text-zinc-400' : 'text-slate-500 hover:text-slate-800')}`}
           >
             Swin Protocol
