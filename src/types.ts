@@ -4,6 +4,15 @@ export enum ModelType {
   Swin = 'Swin Transformer'
 }
 
+export interface StructuredExplanation {
+  summary: string;
+  primary_findings: string[];
+  secondary_signals: string[];
+  confidence_explanation: string;
+  regions_examined: string[];
+  model_consensus: string;
+}
+
 export interface FaceResult {
   face_id: number;
   face_verdict: 'Deepfake' | 'Suspicious' | 'Real';
@@ -26,12 +35,15 @@ export interface DetectionResult {
   explanation?: string;
   suspicious_domains?: string[];
   model_consensus?: string;
+  // NEW structured explanation
+  structured_explanation?: StructuredExplanation;
   // Pipeline-extended fields
   final_label?: 'Real' | 'Deepfake' | 'Suspicious' | 'NoFaces';
   faces?: FaceResult[];
   face_count?: number;
   no_faces_detected?: boolean;
 }
+
 
 
 export interface ModelMetrics {

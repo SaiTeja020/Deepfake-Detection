@@ -20,10 +20,12 @@ import time
 from PIL import Image
 import torchvision.transforms as transforms
 from pipeline import DeepfakePipeline
+from forensic_interpreter import ForensicInterpreter
+from evidence_builder import EvidenceBuilder
 
 load_dotenv()
 
-from llm_adapter import llm_service
+from llm_adapter import provider_router, structured_to_legacy
 
 app = Flask(__name__)
 CORS(app)
@@ -258,16 +260,6 @@ def compute_swin_heatmap(attentions, target_size=(224, 224)):
         return np.zeros((224, 224), dtype=np.float32)
 
 
-def is_informative_explanation(text):
-    if not text or not isinstance(text, str):
-        return False
-    cleaned = text.strip()
-    if len(cleaned.split()) < 12:
-        return False
-    normalized = cleaned.lower()
-    if normalized.startswith('analysis using') or normalized.startswith('analysis:'):
-        return False
-    return True
 
 
 @app.route('/api/users/sync', methods=['POST'])
@@ -629,7 +621,6 @@ def detect_deepfake():
 
         final_score = global_fake_prob
         is_uncertain = False
-        face_context_lines = []
 
         if len(face_list) > 0:
             fused_scores = []
@@ -663,15 +654,6 @@ def detect_deepfake():
                     
                 if f_uncertain:
                     any_uncertain = True
-                
-                geom = f["geometry"]
-                face_context_lines.append(
-                    f"Face {f['face_id']}: fused={face_fused_score:.2f} "
-                    f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%), "
-                    f"crop_quality={crop_quality:.2f}, "
-                    f"eye_asym={geom['eye_asymmetry']:.3f}, "
-                    f"lip_dist={geom['lip_distance']:.1f}px"
-                )
                 
             sorted_fused = sorted(fused_scores, reverse=True)
             final_score = float(np.mean(sorted_fused[:2]))
@@ -711,68 +693,58 @@ def detect_deepfake():
         print(f"[Pipeline] verdict={final_label} ({conf_pct}%), faces={len(face_list)} (out_frac={outside_fraction:.2f})")
 
         # ================================================================
-        # Step 4 — Build per-face context for LLM
+        # Step 4 — Forensic Interpretation (NEW)
         # ================================================================
-        ctx_str = "\n".join(face_context_lines) or "No individual face data."
-        ctx_str += f"\n\n[GLOBAL METRIC] Overall score was computed in logit-space with dynamic gating. Global baseline fake probability was {global_fake_prob*100:.1f}%."
-        face_context = ctx_str
-
-        # Generate suggested LLM stance
-        suggested_llm_stance = "ambiguity"
-        if is_uncertain:
-            if len(face_list) > 0 and all(f.get('mtcnn_conf', 1.0) < 0.45 for f in face_list):
-                suggested_llm_stance = "ambiguity_due_to_insufficient_data"
-            else:
-                suggested_llm_stance = "ambiguity"
-        elif final_prediction in ["Fake", "Suspicious"]:
-            suggested_llm_stance = "manipulation"
-        else:
-            suggested_llm_stance = "authentic"
-
-        fallback_explanation = (
-            f"Analysis of {len(face_list)} face(s): "
-            + ("Anomalous facial geometry and texture artifacts were detected, consistent with synthetic generation."
-               if final_prediction in ("Fake", "Suspicious")
-               else ("Statistically consistent biological patterns and lighting transitions were observed."
-                     if final_prediction == "Real" else "Insufficient or ambiguous data led to uncertain verification."))
-        )
-        fallback_suspicious_domains = (
-            ["Periorbital margin", "Mandibular texture", "Eye asymmetry"]
-            if final_prediction in ("Fake", "Suspicious")
-            else (["Natural eye geometry", "Consistent skin tone", "Symmetric facial structure"] if final_prediction == "Real" else ["Image artifacts", "Occlusion"])
-        )
-        fallback_model_consensus = (
-            f"Multi-face analysis across {len(face_list)} face(s) via geometry-augmented ViT forensic protocol."
-        )
-
-        # ================================================================
-        # Step 5 — LLM explanation (geometry-aware)
-        # ================================================================
-        try:
-            llm_response = llm_service.get_explanation(
-                final_prediction,
-                conf_pct,
-                data.get('model_type', 'ViT'),
-                image_reference=image,
-                heatmap_reference=Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)) if overlay is not None else None,
-                pipeline_context=face_context,
-                suggested_llm_stance=suggested_llm_stance,
+        interpreter = ForensicInterpreter()
+        attention_mask_for_interp = mask if ('mask' in locals() and mask is not None) else None
+        face_interpretations = []
+        for f in face_list:
+            interp = interpreter.interpret_face(
+                face=f,
+                attention_mask=attention_mask_for_interp,
+                global_fake_prob=global_fake_prob,
             )
+            face_interpretations.append(interp)
 
-            if isinstance(llm_response, dict):
-                explanation = llm_response.get('explanation', '').strip() or fallback_explanation
-                suspicious_domains = llm_response.get('suspicious_domains', []) or list(fallback_suspicious_domains)
-                model_consensus = llm_response.get('model_consensus', '').strip() or fallback_model_consensus
-            else:
-                expl_candidate = str(llm_response).strip() if llm_response else ''
-                explanation = expl_candidate if is_informative_explanation(expl_candidate) else fallback_explanation
-                suspicious_domains = list(fallback_suspicious_domains)
-                model_consensus = fallback_model_consensus
-        except Exception as e:
-            print(f"LLM adapter error: {e}")
-            explanation = fallback_explanation
-            suspicious_domains = list(fallback_suspicious_domains)
-            model_consensus = fallback_model_consensus
+        # ================================================================
+        # Step 5 — Build Structured Evidence Packet (NEW)
+        # ================================================================
+        evidence_packet = EvidenceBuilder.build(
+            verdict=final_prediction,
+            confidence=conf_pct,
+            faces=face_interpretations,
+            attention_outside_faces=outside_fraction,
+            model_type=data.get('model_type', 'ViT'),
+            global_fake_prob=global_fake_prob,
+        )
+
+        # ================================================================
+        # Step 6 — LLM Explanation via Provider Router (NEW)
+        # ================================================================
+        # Prepare image bytes for cache key
+        image_bytes_for_cache = None
+        try:
+            image_bytes_for_cache = img_data  # raw decoded bytes from earlier
+        except Exception:
+            pass
+
+        # Prepare heatmap PIL image for multimodal providers
+        heatmap_pil = None
+        if overlay is not None:
+            try:
+                heatmap_pil = Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB))
+            except Exception:
+                pass
+
+        structured_explanation = provider_router.get_explanation(
+            evidence_packet=evidence_packet,
+            image=image,
+            heatmap=heatmap_pil,
+            image_bytes=image_bytes_for_cache,
+        )
+
+        # Convert to legacy format for backward compatibility
+        legacy = structured_to_legacy(structured_explanation)
 
         return jsonify({
             # --- legacy fields (frontend compatible) ---
@@ -780,15 +752,17 @@ def detect_deepfake():
             "confidence": conf_pct,
             "inferenceTime": inference_time,
             "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400",
-            "explanation": explanation,
-            "suspicious_domains": suspicious_domains,
-            "model_consensus": model_consensus,
+            "explanation": legacy["explanation"],
+            "suspicious_domains": legacy["suspicious_domains"],
+            "model_consensus": legacy["model_consensus"],
+            # --- NEW structured explanation ---
+            "structured_explanation": structured_explanation,
             # --- extended pipeline fields ---
             "final_label": final_label,
             "faces": face_list,
             "face_count": len(face_list),
             "no_faces_detected": pipeline_result.get("no_faces_detected", False),
-            "model_name": loaded_name # Explicitly identify which model ID was used
+            "model_name": loaded_name  # Explicitly identify which model ID was used
         }), 200
 
     except Exception as e:
