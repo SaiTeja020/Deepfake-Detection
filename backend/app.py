@@ -654,11 +654,14 @@ def detect_deepfake():
                 crop_quality = f.get('mtcnn_conf', 1.0)
                 geo_anomaly_score = f.get('geom_score', 0.0)
                 
-                w_local, w_global = dynamic_weight_gate(crop_quality)
-                logit_local = logit(fp)
-                
-                # Calibration bias: Quality suppression + Geometry boost
-                bias = (geo_anomaly_score - 0.5) * 0.3 - (1.0 - crop_quality) * 0.4
+                # Attention map bias: if the model is "looking" outside the face too much, it's suspicious
+                # (suggests boundary artifacts common in face swaps)
+                attention_bias = 0.0
+                if 'outside_fraction' in locals() and outside_fraction > 0.15:
+                    attention_bias = (outside_fraction - 0.15) * 0.5
+
+                # Calibration bias: Quality suppression + Geometry boost + Attention bias
+                bias = (geo_anomaly_score - 0.5) * 0.4 - (1.0 - crop_quality) * 0.3 + attention_bias
                 
                 fused_logit = w_local * logit_local + w_global * logit_global + bias
                 face_fused_score = float(sigmoid(fused_logit))
@@ -676,10 +679,17 @@ def detect_deepfake():
                     
                 if f_uncertain:
                     any_uncertain = True
+                    f['face_verdict'] = "Uncertain"
+                elif face_fused_score >= 0.70:
+                    f['face_verdict'] = "Deepfake"
+                elif face_fused_score >= 0.50:
+                    f['face_verdict'] = "Suspicious"
+                else:
+                    f['face_verdict'] = "Real"
                 
                 geom = f["geometry"]
                 face_context_lines.append(
-                    f"Face {f['face_id']}: fused={face_fused_score:.2f} "
+                    f"Face {f['face_id']}: verdict={f['face_verdict']}, fused={face_fused_score:.2f} "
                     f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%), "
                     f"crop_quality={crop_quality:.2f}, "
                     f"eye_asym={geom['eye_asymmetry']:.3f}, "
@@ -695,15 +705,32 @@ def detect_deepfake():
             if abs(global_fake_prob - 0.5) < 0.10:
                 is_uncertain = True
         
-        # Enforce global uncertainty band and label mapping
+        # ================================================================
+        # Step 3 — Aggregation & Priority Logic
+        # ================================================================
+        # Severity ranking: Deepfake (3) > Suspicious (2) > Uncertain (1) > Real (0)
+        severity_map = {"Real": 0, "Uncertain": 1, "Suspicious": 2, "Deepfake": 3}
+        inv_severity_map = {0: "Real", 1: "Uncertain", 2: "Suspicious", 3: "Deepfake"}
+
+        # Face-based severity
+        face_severities = [severity_map.get(f.get('face_verdict', 'Real'), 0) for f in face_list]
+        max_face_severity = max(face_severities) if face_severities else 0
+
+        # Global/Background-based severity
+        # We cap background-driven severity at 'Suspicious' (2) as per user request
+        # to avoid background artifacts triggering an outright 'Deepfake'.
         if is_uncertain:
-            final_label = "Uncertain"
+            global_severity = 1
         elif final_score >= 0.70:
-            final_label = "Deepfake"
+            global_severity = 2  # Capped at Suspicious
         elif final_score >= 0.50:
-            final_label = "Suspicious"
+            global_severity = 2
         else:
-            final_label = "Real"
+            global_severity = 0
+
+        # Final decision: Maximum of face and background severity
+        final_severity = max(max_face_severity, global_severity)
+        final_label = inv_severity_map[final_severity]
 
         # Legacy 'prediction' field
         if final_label == "Deepfake":

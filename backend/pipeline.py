@@ -51,6 +51,7 @@ LEFT_EYE_CORNERS = (33, 133)
 RIGHT_EYE_CORNERS = (362, 263)
 UPPER_LIP_IDX = 13
 LOWER_LIP_IDX = 14
+NOSE_TIP_IDX = 4
 
 
 # ---------------------------------------------------------------------------
@@ -268,9 +269,22 @@ class DeepfakePipeline:
         lower_lip = get_pt(LOWER_LIP_IDX)
         lip_distance = float(np.linalg.norm(upper_lip - lower_lip))
 
+        # Nose alignment (centrality relative to eyes)
+        nose_tip = get_pt(NOSE_TIP_IDX)
+        eye_midpoint = (l_eye_center + r_eye_center) / 2
+        # Project nose onto eye vector to check lateral deviation
+        eye_vec = r_eye_center - l_eye_center
+        eye_vec_unit = eye_vec / (np.linalg.norm(eye_vec) + 1e-6)
+        
+        nose_vec = nose_tip - eye_midpoint
+        # Cross product in 2D gives lateral offset
+        lateral_offset = abs(nose_vec[0] * eye_vec_unit[1] - nose_vec[1] * eye_vec_unit[0])
+        alignment_score = lateral_offset / inter_eye_dist
+
         return {
             "eye_asymmetry": float(round(min(eye_asymmetry, 1.0), 4)),
             "lip_distance":  float(round(lip_distance, 2)),
+            "alignment_score": float(round(min(alignment_score, 1.0), 4)),
         }
 
     # ------------------------------------------------------------------ #
@@ -289,8 +303,13 @@ class DeepfakePipeline:
         Returns:
             (fused_score, geom_score) — both in [0, 1].
         """
-        # Geometry anomaly: amplified eye asymmetry, clamped to [0, 1]
-        geom_score = min(1.0, geom_feats.get("eye_asymmetry", 0.0) * 3.0)
+        # Geometry anomaly: combined eye asymmetry and nose alignment
+        eye_asym = geom_feats.get("eye_asymmetry", 0.0)
+        alignment = geom_feats.get("alignment_score", 0.0)
+        
+        # We amplify both; if either is high, it's a red flag
+        geom_score = max(min(1.0, eye_asym * 4.0), min(1.0, alignment * 2.5))
+        
         fused = w_cnn * fake_prob + w_geom * geom_score
         return round(fused, 4), round(geom_score, 4)
 
@@ -317,10 +336,15 @@ class DeepfakePipeline:
     @staticmethod
     def aggregate_faces(face_results: List[Dict[str, Any]]) -> Tuple[str, float]:
         """
-        Compute final image-level verdict from per-face fused scores.
+        Compute final image-level verdict from per-face fused scores and verdicts.
 
-        Strategy: average the top-2 fused scores (or single if only one face).
-        Thresholds: >0.70 → Deepfake, >0.50 → Suspicious, else → Real.
+        Strategy: 
+        1. Score: Average the top-2 fused scores (or single if only one face).
+        2. Label: Priority-based (Deepfake > Suspicious > Uncertain > Real).
+           If any face is Deepfake, the entire image is Deepfake.
+           If no Deepfake but any Suspicious, entire image is Suspicious.
+           If no Deepfake/Suspicious but any Uncertain, entire image is Uncertain.
+           Otherwise Real.
 
         Returns:
             (final_label, final_score)
@@ -333,10 +357,15 @@ class DeepfakePipeline:
         )
         final_score = float(np.mean(scores[:2]))
 
-        if final_score > THRESH_DEEPFAKE:
+        # Priority-based label selection
+        verdicts = [f.get("face_verdict", "Real") for f in face_results]
+        
+        if "Deepfake" in verdicts:
             label = "Deepfake"
-        elif final_score > THRESH_SUSPICIOUS:
+        elif "Suspicious" in verdicts:
             label = "Suspicious"
+        elif "Uncertain" in verdicts:
+            label = "Uncertain"
         else:
             label = "Real"
 
