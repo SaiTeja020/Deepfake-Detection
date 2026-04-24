@@ -591,11 +591,24 @@ def detect_deepfake():
         else:
             print(f"Warning: No attentions received from {model_type_used}, skipping heatmap.")
 
-
         # ================================================================
-        # Step 3 — Apply Contextual Fusion & Map Labels
+        # Step 2b — FaceMesh Visualization
         # ================================================================
-        face_list   = pipeline_result["faces"]
+        face_list = pipeline_result["faces"]
+        facemesh_url = None
+        facemesh_data_uri = None
+        try:
+            facemesh_img = DeepfakePipeline.draw_face_mesh(image, face_list)
+            _, fm_buffer = cv2.imencode('.jpg', facemesh_img)
+            facemesh_base64 = base64.b64encode(fm_buffer).decode('utf-8')
+            facemesh_data_uri = f"data:image/jpeg;base64,{facemesh_base64}"
+            
+            # Upload to Supabase
+            facemesh_url, fm_error = upload_to_supabase(facemesh_data_uri, "heatmaps", folder=f"{firebase_uid}/facemesh")
+            if fm_error:
+                print(f"FaceMesh upload warning: {fm_error}")
+        except Exception as e:
+            print(f"FaceMesh generation error: {e}")
         
         outside_fraction = 0.0
 
@@ -755,6 +768,7 @@ def detect_deepfake():
                 data.get('model_type', 'ViT'),
                 image_reference=image,
                 heatmap_reference=Image.fromarray(cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB)) if overlay is not None else None,
+                facemesh_reference=Image.fromarray(cv2.cvtColor(facemesh_img, cv2.COLOR_BGR2RGB)) if 'facemesh_img' in locals() else None,
                 pipeline_context=face_context,
                 suggested_llm_stance=suggested_llm_stance,
             )
@@ -780,6 +794,7 @@ def detect_deepfake():
             "confidence": conf_pct,
             "inferenceTime": inference_time,
             "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400",
+            "facemeshUrl": facemesh_url,
             "explanation": explanation,
             "suspicious_domains": suspicious_domains,
             "model_consensus": model_consensus,

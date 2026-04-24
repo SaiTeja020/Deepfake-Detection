@@ -2,7 +2,7 @@ import os
 import json
 
 class LLMProvider:
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, facemesh_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         raise NotImplementedError
 
 
@@ -32,16 +32,10 @@ def parse_llm_structured_output(raw):
     }
 
 
-def build_fallback_explanation(prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
-    region_info = (
-        "The attention map suggests focus at central facial landmarks (eyes, nose, mouth) and border textures." if prediction.lower() == 'real'
-        else "The attention map suggests anomalies around cheekbones, mouth edges, and periorbital zones where synthesis artifacts often appear."
-    )
-
     return (
         f"{model_used} forensic analysis indicates '{prediction}' with {confidence}% confidence. "
         f"{region_info} "
-        "Focus on the heatmap regions for validation."
+        "Focus on the heatmap and face mesh regions for validation."
     )
 
 
@@ -54,9 +48,10 @@ class GeminiProvider(LLMProvider):
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, facemesh_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         image_info = image_reference or "<original image data provided>"
         heatmap_info = heatmap_reference or "<attention heatmap generated>"
+        facemesh_info = facemesh_reference or "<face mesh geometry provided>"
 
         face_block = (
             f"\nPer-face pipeline data:\n{pipeline_context}"
@@ -77,10 +72,10 @@ class GeminiProvider(LLMProvider):
         prompt = (
             f"You are a deepfake detection forensic system. A face image was analyzed using the {model_used} architecture. "
             f"The model outcome is '{prediction}' with {confidence}% confidence.{face_block} "
-            f"Your task is to explain WHY the model made this prediction based on the visual evidence in the provided original image and heatmap (if available). {stance_text} "
+            f"Your task is to explain WHY the model made this prediction based on the visual evidence in the provided original image, heatmap, and face mesh (if available). {stance_text} "
             f"Do NOT contradict the model's outcome. "
             f"Ignore providing URLs. Use only brief technical detail. "
-            f"Focus on image regions (face landmarks, edges, textures) and heatmap cues. "
+            f"Focus on image regions (face landmarks, edges, textures), heatmap cues, and geometry anomalies in the face mesh. "
             f"For '{prediction}' prediction, choose suspicious_domains that indicate authenticity if Real, or artifacts if Fake. "
             "Output ONLY valid JSON with no extra text. "
             "Format: {\"explanation\":\"2-3 sentences here\", \"suspicious_domains\":[\"item1\",\"item2\"], \"model_consensus\":\"1 sentence here\"} "
@@ -92,6 +87,8 @@ class GeminiProvider(LLMProvider):
             contents.append(image_reference)
         if heatmap_reference is not None:
             contents.append(heatmap_reference)
+        if facemesh_reference is not None:
+            contents.append(facemesh_reference)
             
         try:
             response = self.model.generate_content(contents)
@@ -129,7 +126,7 @@ class LlamaProvider(LLMProvider):
             print(f"Llama init error: {e}")
             self.client = None
 
-    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
+    def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, facemesh_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         if self.client is None:
             print("Llama client unavailable, using fallback")
             return build_fallback_explanation(prediction, confidence, model_used, image_reference, heatmap_reference)
@@ -193,14 +190,14 @@ class LLMAdapter:
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
 
-    def get_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
-        return self.provider.generate_explanation(prediction, confidence, model_used, image_reference, heatmap_reference, pipeline_context, suggested_llm_stance)
+    def get_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, facemesh_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
+        return self.provider.generate_explanation(prediction, confidence, model_used, image_reference, heatmap_reference, facemesh_reference, pipeline_context, suggested_llm_stance)
 
 # ==========================================
 # CONFIGURATION
 # 1-Line switch: Change "gemini" to "llama" to switch standard LLM provider.
 # ==========================================
-ACTIVE_PROVIDER = "llama"
+ACTIVE_PROVIDER = "gemini"
 
 # Singleton instance for easy import across backend files
 llm_service = LLMAdapter(ACTIVE_PROVIDER)

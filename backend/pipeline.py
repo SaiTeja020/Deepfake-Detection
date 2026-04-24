@@ -93,6 +93,22 @@ class DeepfakePipeline:
                 self._mtcnn = None
         return self._mtcnn
 
+    def _get_face_mesh(self):
+        if self._face_mesh is None:
+            try:
+                import mediapipe as mp
+                self._face_mesh = mp.solutions.face_mesh.FaceMesh(
+                    static_image_mode=True,
+                    max_num_faces=1,
+                    refine_landmarks=True,
+                    min_detection_confidence=0.5
+                )
+                logger.info("MediaPipe FaceMesh initialised")
+            except ImportError:
+                logger.warning("mediapipe not installed — FaceMesh unavailable")
+                self._face_mesh = None
+        return self._face_mesh
+
     # ------------------------------------------------------------------ #
     # Component 1 – Face Detection                                         #
     # ------------------------------------------------------------------ #
@@ -198,11 +214,21 @@ class DeepfakePipeline:
 
     def get_landmarks(self, face_crop: Image.Image):
         """
-        Stub kept for API compatibility. Landmarks are now sourced from
-        MTCNN's detect(landmarks=True) call in detect_faces().
-        Returns None always — callers should use the 'kp' field instead.
+        Extract 468 landmarks using MediaPipe FaceMesh.
         """
-        return None
+        face_mesh = self._get_face_mesh()
+        if face_mesh is None:
+            return None
+
+        img_np = np.array(face_crop)
+        # FaceMesh expects RGB
+        results = face_mesh.process(img_np)
+
+        if not results.multi_face_landmarks:
+            return None
+
+        # Return first face's landmarks
+        return results.multi_face_landmarks[0]
 
     # ------------------------------------------------------------------ #
     # Component 5 – Geometry Feature Extraction  (from MTCNN 5-pt kp)     #
@@ -210,39 +236,37 @@ class DeepfakePipeline:
 
     @staticmethod
     def extract_geometry_features(
-        kp,          # 5-point MTCNN keypoints [[x,y], ...] or None
+        landmarks,   # MediaPipe face_landmarks object
         width: int,
         height: int,
     ) -> Dict[str, float]:
         """
-        Compute geometry features from MTCNN 5-point facial keypoints.
-
-        Keypoint order (image pixel coords):
-            0 = left_eye, 1 = right_eye, 2 = nose,
-            3 = mouth_left, 4 = mouth_right
-
-        Features:
-            eye_asymmetry  — vertical eye-height difference / inter-eye dist.
-                             0.0 = perfectly level; >0.15 = suspiciously tilted.
-            lip_distance   — pixel distance between left and right mouth corners.
-
-        Returns neutral dict (zeros) if kp is None.
+        Compute geometry features from MediaPipe 468-point landmarks.
         """
-        if kp is None or len(kp) < 5:
+        if landmarks is None:
             return {"eye_asymmetry": 0.0, "lip_distance": 0.0}
 
-        left_eye  = np.array(kp[0], dtype=float)
-        right_eye = np.array(kp[1], dtype=float)
-        mouth_l   = np.array(kp[3], dtype=float)
-        mouth_r   = np.array(kp[4], dtype=float)
+        def get_pt(idx):
+            lm = landmarks.landmark[idx]
+            return np.array([lm.x * width, lm.y * height])
 
-        # Vertical asymmetry: |Δy| / inter-eye horizontal distance
-        inter_eye_dist = float(np.linalg.norm(right_eye - left_eye)) + 1e-6
-        eye_height_diff = abs(float(left_eye[1]) - float(right_eye[1]))
-        eye_asymmetry   = eye_height_diff / inter_eye_dist
+        # Eye asymmetry using FaceMesh indices
+        l_inner = get_pt(LEFT_EYE_CORNERS[0])
+        l_outer = get_pt(LEFT_EYE_CORNERS[1])
+        r_inner = get_pt(RIGHT_EYE_CORNERS[0])
+        r_outer = get_pt(RIGHT_EYE_CORNERS[1])
 
-        # Mouth width (pixels)
-        lip_distance = float(np.linalg.norm(mouth_r - mouth_l))
+        l_eye_center = (l_inner + l_outer) / 2
+        r_eye_center = (r_inner + r_outer) / 2
+
+        inter_eye_dist = float(np.linalg.norm(r_eye_center - l_eye_center)) + 1e-6
+        eye_height_diff = abs(float(l_eye_center[1]) - float(r_eye_center[1]))
+        eye_asymmetry = eye_height_diff / inter_eye_dist
+
+        # Lip distance
+        upper_lip = get_pt(UPPER_LIP_IDX)
+        lower_lip = get_pt(LOWER_LIP_IDX)
+        lip_distance = float(np.linalg.norm(upper_lip - lower_lip))
 
         return {
             "eye_asymmetry": float(round(min(eye_asymmetry, 1.0), 4)),
@@ -398,9 +422,12 @@ class DeepfakePipeline:
             fake_prob = probs_dict["fake_prob"]
             real_prob = probs_dict["real_prob"]
 
-            # Geometry features from MTCNN 5-point keypoints
+            # Component 4 — MediaPipe Landmarks
+            face_landmarks = self.get_landmarks(face_crop)
+
+            # Component 5 — Geometry features from FaceMesh
             geom_feats = self.extract_geometry_features(
-                det.get("kp"), crop_w, crop_h
+                face_landmarks, crop_w, crop_h
             )
 
             # score fusion (using pure fake probability)
@@ -424,6 +451,7 @@ class DeepfakePipeline:
                 "fused_score": fused,
                 "mtcnn_conf": round(det.get("confidence", 1.0), 4),
                 "geometry": geom_feats,
+                "_landmarks": face_landmarks,  # Internal use for drawing
             })
 
         # --- aggregate ---
@@ -496,6 +524,41 @@ class DeepfakePipeline:
                 font, font_scale, (255, 255, 255), thickness,
                 cv2.LINE_AA,
             )
+
+        return canvas
+
+    @staticmethod
+    def draw_face_mesh(
+        image: Image.Image,
+        face_results: List[Dict[str, Any]],
+    ) -> np.ndarray:
+        """
+        Draw MediaPipe FaceMesh wireframes on a blank black canvas.
+        """
+        img_w, img_h = image.size
+        canvas = np.zeros((img_h, img_w, 3), dtype=np.uint8)
+
+        try:
+            import mediapipe as mp
+            mp_drawing = mp.solutions.drawing_utils
+            mp_face_mesh = mp.solutions.face_mesh
+            drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1, color=(0, 255, 0))
+
+            for face in face_results:
+                landmarks = face.get("_landmarks")
+                if landmarks is None:
+                    continue
+                
+                # Draw the mesh connections
+                mp_drawing.draw_landmarks(
+                    image=canvas,
+                    landmark_list=landmarks,
+                    connections=mp_face_mesh.FACEMESH_TESSELATION,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=drawing_spec
+                )
+        except:
+            pass
 
         return canvas
 
