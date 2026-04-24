@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
+import math
 from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
@@ -97,7 +98,16 @@ class DeepfakePipeline:
     def _get_face_mesh(self):
         if self._face_mesh is None:
             try:
-                import mediapipe.python.solutions.face_mesh as mp_fm
+                # Try multiple import styles for different mediapipe versions/environments
+                try:
+                    import mediapipe.python.solutions.face_mesh as mp_fm
+                except ImportError:
+                    try:
+                        from mediapipe.solutions import face_mesh as mp_fm
+                    except ImportError:
+                        import mediapipe as mp
+                        mp_fm = mp.solutions.face_mesh
+
                 self._face_mesh = mp_fm.FaceMesh(
                     static_image_mode=True,
                     max_num_faces=1,
@@ -291,27 +301,47 @@ class DeepfakePipeline:
     # Component 6 – Score Fusion                                           #
     # ------------------------------------------------------------------ #
 
-    @staticmethod
-    def fuse_scores(
-        fake_prob: float,
-        geom_feats: Dict[str, float],
-        w_cnn: float = W_CNN,
-        w_geom: float = W_GEOM,
-    ) -> Tuple[float, float]:
+    def _logit(self, p):
+        p = max(1e-6, min(1.0 - 1e-6, p))
+        return math.log(p / (1.0 - p))
+
+    def _sigmoid(self, x):
+        return 1.0 / (1.0 + math.exp(-x))
+
+    def fuse_scores(self, cnn_fake_prob: float, geom_features: Dict[str, float], crop_quality: float = 1.0, outside_fraction: float = 0.0) -> Tuple[float, float]:
         """
-        Combine CNN deepfake-probability with a geometry anomaly score.
-        Returns:
-            (fused_score, geom_score) — both in [0, 1].
+        Fused logit-space analysis with Dynamic Weight Gating and Attention Bias.
         """
-        # Geometry anomaly: combined eye asymmetry and nose alignment
-        eye_asym = geom_feats.get("eye_asymmetry", 0.0)
-        alignment = geom_feats.get("alignment_score", 0.0)
-        
+        # Component 1 — Dynamic Weight Gate based on crop quality
+        if crop_quality > 0.85:
+            w_local, w_global = 0.85, 0.15
+        elif crop_quality < 0.40:
+            w_local, w_global = 0.30, 0.70
+        else:
+            w_local, w_global = 0.70, 0.30
+
+        # Component 2 — Forensic Bias from Geometry
+        eye_asym = geom_features.get("eye_asymmetry", 0.0)
+        alignment = geom_features.get("alignment_score", 0.0)
         # We amplify both; if either is high, it's a red flag
-        geom_score = max(min(1.0, eye_asym * 4.0), min(1.0, alignment * 2.5))
+        geo_score = max(min(1.0, eye_asym * 4.0), min(1.0, alignment * 2.5))
+        # Calibration bias: Geometry boost + Quality suppression + Attention bias
+        attention_bias = 0.0
+        if outside_fraction > 0.15:
+            attention_bias = (outside_fraction - 0.15) * 0.5
+            
+        bias = (geo_score - 0.5) * 0.4 - (1.0 - crop_quality) * 0.3 + attention_bias
+
+        # Component 3 — Logit-space Fusion
+        logit_local = self._logit(cnn_fake_prob)
+        # Global signal fallback (simplified here as 0.5/neutral if no global context, 
+        # but in practice we use the average face logit or similar)
+        logit_global = 0.0 
         
-        fused = w_cnn * fake_prob + w_geom * geom_score
-        return round(fused, 4), round(geom_score, 4)
+        fused_logit = w_local * logit_local + w_global * logit_global + bias
+        fused_score = self._sigmoid(fused_logit)
+        
+        return round(float(fused_score), 4), round(float(geo_score), 4)
 
     # ------------------------------------------------------------------ #
     # Component 7 – Multi-Face Aggregation                                 #
@@ -375,7 +405,7 @@ class DeepfakePipeline:
     # Main pipeline entry point                                            #
     # ------------------------------------------------------------------ #
 
-    def run(self, image: Image.Image) -> Dict[str, Any]:
+    def run(self, image: Image.Image, outside_fraction: float = 0.0) -> Dict[str, Any]:
         """
         Run the full pipeline on a PIL image.
 
@@ -413,7 +443,7 @@ class DeepfakePipeline:
             label = "Fake" if probs_dict["fake_prob"] > probs_dict["real_prob"] else "Real"
             conf = max(probs_dict["fake_prob"], probs_dict["real_prob"])
             
-            fused, geom_s = self.fuse_scores(fake_prob, {"eye_asymmetry": 0.0, "lip_distance": 0.0})
+            fused, geom_s = self.fuse_scores(fake_prob, {"eye_asymmetry": 0.0, "lip_distance": 0.0}, outside_fraction=outside_fraction)
             face_verdict = self.face_verdict_from_score(fused)
             face_results = [{
                 "face_id": 0,
@@ -459,11 +489,13 @@ class DeepfakePipeline:
                 face_landmarks, crop_w, crop_h
             )
 
-            # score fusion (using pure fake probability)
-            fused, geom_s = self.fuse_scores(fake_prob, geom_feats)
+            # score fusion (using pure fake probability + attention bias)
+            fused, geom_s = self.fuse_scores(fake_prob, geom_feats, crop_quality=det.get("confidence", 1.0), outside_fraction=outside_fraction)
 
             # per-face verdict & Uncertainty checking
-            if abs(fake_prob - real_prob) < 0.10:
+            # Rule 1: Probability Gap (Model is torn between classes)
+            # Rule 2: Score Boundary (Model is sitting on the 0.5 fence)
+            if abs(fake_prob - real_prob) < 0.10 or (0.45 <= fused <= 0.55):
                 face_verdict = "Uncertain"
             else:
                 face_verdict = self.face_verdict_from_score(fused)
@@ -521,6 +553,7 @@ class DeepfakePipeline:
             "Deepfake":   (51,  51,  255),   # red in BGR
             "Suspicious": (0,   165, 255),   # amber in BGR
             "Real":       (80,  200, 0),     # green in BGR
+            "Uncertain":  (180, 180, 180),   # grey in BGR
         }
 
         if heatmap_bgr is not None:
@@ -532,7 +565,7 @@ class DeepfakePipeline:
             x1, y1, x2, y2 = face["box"]
             fused   = face["fused_score"]
             verdict = face.get("face_verdict", "Real")   # per-face label
-            color   = COLOURS.get(verdict, (80, 200, 0))
+            color   = COLOURS.get(verdict, (180, 180, 180)) # Default to grey if unknown
 
             # Box
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
@@ -568,8 +601,18 @@ class DeepfakePipeline:
         canvas = np.zeros((img_h, img_w, 3), dtype=np.uint8)
 
         try:
-            import mediapipe.python.solutions.drawing_utils as mp_drawing
-            import mediapipe.python.solutions.face_mesh as mp_face_mesh
+            try:
+                import mediapipe.python.solutions.drawing_utils as mp_drawing
+                import mediapipe.python.solutions.face_mesh as mp_face_mesh
+            except ImportError:
+                try:
+                    from mediapipe.solutions import drawing_utils as mp_drawing
+                    from mediapipe.solutions import face_mesh as mp_face_mesh
+                except ImportError:
+                    import mediapipe as mp
+                    mp_drawing = mp.solutions.drawing_utils
+                    mp_face_mesh = mp.solutions.face_mesh
+
             drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1, color=(0, 255, 0))
 
             for face in face_results:

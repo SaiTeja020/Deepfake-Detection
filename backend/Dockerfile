@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
     libusb-1.0-0 \
+    libnss3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Optimize: Copy requirements first to leverage Docker layer caching

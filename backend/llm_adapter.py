@@ -32,10 +32,12 @@ def parse_llm_structured_output(raw):
     }
 
 
+def build_fallback_explanation(prediction, confidence, model_used, image_reference=None, heatmap_reference=None):
+    region_info = "High activity regions in the attention heatmap suggest areas of focus for the model."
     return (
-        f"{model_used} forensic analysis indicates '{prediction}' with {confidence}% confidence. "
+        f"Forensic analysis via {model_used} indicates a result of '{prediction}' with {confidence}% confidence. "
         f"{region_info} "
-        "Focus on the heatmap and face mesh regions for validation."
+        "Review the face mesh geometry for any unnatural warping or asymmetry."
     )
 
 
@@ -46,7 +48,7 @@ class GeminiProvider(LLMProvider):
         if not api_key:
             print("Warning: GEMINI_API_KEY not set")
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
     def generate_explanation(self, prediction, confidence, model_used, image_reference=None, heatmap_reference=None, facemesh_reference=None, pipeline_context=None, suggested_llm_stance="ambiguity"):
         image_info = image_reference or "<original image data provided>"

@@ -648,57 +648,26 @@ def detect_deepfake():
             fused_scores = []
             any_uncertain = False
             
-            for f in face_list:
-                fp = f.get('fake_prob', 0.5)
-                rp = f.get('real_prob', 0.5)
-                crop_quality = f.get('mtcnn_conf', 1.0)
-                geo_anomaly_score = f.get('geom_score', 0.0)
+        face_list = pipeline_result["faces"]
+        
+        # Build face context for LLM using the ALREADY CALCULATED pipeline verdicts
+        face_context_lines = []
+        fused_scores = []
+        for f in face_list:
+            face_fused_score = f['fused_score']
+            fused_scores.append(face_fused_score)
+            fp = f.get('fake_prob', 0.5)
+            rp = f.get('real_prob', 0.5)
+            geom = f.get("geometry", {"eye_asymmetry": 0, "lip_distance": 0})
+            
+            face_context_lines.append(
+                f"Face {f['face_id']}: verdict={f['face_verdict']}, fused={face_fused_score:.2f} "
+                f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%), "
+                f"eye_asym={geom.get('eye_asymmetry', 0):.3f}"
+            )
                 
-                w_local, w_global = dynamic_weight_gate(crop_quality)
-                logit_local = logit(fp)
-
-                # Attention map bias: if the model is "looking" outside the face too much, it's suspicious
-                # (suggests boundary artifacts common in face swaps)
-                attention_bias = 0.0
-                if 'outside_fraction' in locals() and outside_fraction > 0.15:
-                    attention_bias = (outside_fraction - 0.15) * 0.5
-
-                # Calibration bias: Quality suppression + Geometry boost + Attention bias
-                bias = (geo_anomaly_score - 0.5) * 0.4 - (1.0 - crop_quality) * 0.3 + attention_bias
-                
-                fused_logit = w_local * logit_local + w_global * logit_global + bias
-                face_fused_score = float(sigmoid(fused_logit))
-                fused_scores.append(face_fused_score)
-                f['fused_score'] = round(face_fused_score, 4)
-                
-                confidence_gap = abs(fp - rp)
-                
-                # Per-face uncertainty logic
-                f_uncertain = False
-                if confidence_gap < 0.10: f_uncertain = True
-                if crop_quality < 0.45: f_uncertain = True
-                if (fp > 0.5) != (geo_anomaly_score > 0.5) and geo_anomaly_score > 0.0:
-                    f_uncertain = True
-                    
-                if f_uncertain:
-                    any_uncertain = True
-                    f['face_verdict'] = "Uncertain"
-                elif face_fused_score >= 0.70:
-                    f['face_verdict'] = "Deepfake"
-                elif face_fused_score >= 0.50:
-                    f['face_verdict'] = "Suspicious"
-                else:
-                    f['face_verdict'] = "Real"
-                
-                geom = f["geometry"]
-                face_context_lines.append(
-                    f"Face {f['face_id']}: verdict={f['face_verdict']}, fused={face_fused_score:.2f} "
-                    f"(Fake: {fp*100:.1f}%, Real: {rp*100:.1f}%), "
-                    f"crop_quality={crop_quality:.2f}, "
-                    f"eye_asym={geom['eye_asymmetry']:.3f}, "
-                    f"lip_dist={geom['lip_distance']:.1f}px"
-                )
-                
+        # Aggregate scores
+        if fused_scores:
             sorted_fused = sorted(fused_scores, reverse=True)
             final_score = float(np.mean(sorted_fused[:2]))
             
@@ -818,6 +787,12 @@ def detect_deepfake():
             suspicious_domains = list(fallback_suspicious_domains)
             model_consensus = fallback_model_consensus
 
+        # Clean internal fields from face_list before JSON response
+        serializable_faces = []
+        for f in face_list:
+            clean_face = {k: v for k, v in f.items() if not k.startswith('_')}
+            serializable_faces.append(clean_face)
+
         return jsonify({
             # --- legacy fields (frontend compatible) ---
             "prediction": final_prediction,
@@ -830,7 +805,7 @@ def detect_deepfake():
             "model_consensus": model_consensus,
             # --- extended pipeline fields ---
             "final_label": final_label,
-            "faces": face_list,
+            "faces": serializable_faces,
             "face_count": len(face_list),
             "no_faces_detected": pipeline_result.get("no_faces_detected", False),
             "model_name": loaded_name # Explicitly identify which model ID was used
