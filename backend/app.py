@@ -17,6 +17,7 @@ from huggingface_hub import hf_hub_download
 import traceback
 import threading
 import time
+import logging
 from PIL import Image
 import torchvision.transforms as transforms
 from pipeline import DeepfakePipeline
@@ -26,6 +27,10 @@ from evidence_builder import EvidenceBuilder
 load_dotenv()
 
 from llm_adapter import provider_router, structured_to_legacy
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
@@ -37,28 +42,26 @@ supabase: Client = create_client(url, key)
 
 # Firebase Configuration
 firebase_creds_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
+db = None
 if firebase_creds_path and os.path.exists(firebase_creds_path):
-    cred = credentials.Certificate(firebase_creds_path)
-    firebase_admin.initialize_app(cred)
-    db = firestore.client()
-else:
-    print("Warning: Firebase service account path not found or invalid.")
-    db = None
+    try:
+        cred = credentials.Certificate(firebase_creds_path)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("Firebase initialized successfully.")
+    except Exception as e:
+        print(f"Firebase initialization failed: {e}")
 
-# Deepfake Model Configuration
-MODEL_PATHS = {
-    "ViT": "SARVM/Refined_ViT",
-    "Swin Transformer": "SARVM/Swin_Transformer"
-}
+# Device configuration
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {DEVICE}")
 
-# Model Cache
-model_cache = {
-    "models": {},
-    "processors": {},
-    "transforms": {},
-    "names": {} 
+# Model management
+MODEL_PATHS = {
+    "ViT": "SARVM/ViT_Deepfake",
+    "Swin Transformer": "microsoft/swin-tiny-patch4-window7-224",
 }
+model_cache = {"models": {}, "processors": {}, "names": {}}
 deepfake_pipeline = None
 
 def get_model(model_type="ViT"):
@@ -82,12 +85,14 @@ def get_model(model_type="ViT"):
                 print(f"Warning: Image processor not found for {model_name} ({pe}). Falling back to standard Swin processor.")
                 processor = AutoImageProcessor.from_pretrained("microsoft/swin-tiny-patch4-window7-224")
             
-            # Load model
+            # Load model with forced standard loading to avoid meta-tensor issues
             try:
                 model = AutoModelForImageClassification.from_pretrained(
                     model_name, 
                     token=hf_token,
-                    output_attentions=True
+                    output_attentions=True,
+                    low_cpu_mem_usage=False,
+                    ignore_mismatched_sizes=True
                 )
             except Exception as me:
                 print(f"Warning: AutoModel failed for {model_name} ({me}). Trying specific class fallback.")
@@ -96,9 +101,14 @@ def get_model(model_type="ViT"):
                 else:
                     from transformers import ViTForImageClassification as model_class
                 
-                model = model_class.from_pretrained(model_name, token=hf_token, output_attentions=True)
+                model = model_class.from_pretrained(
+                    model_name, 
+                    token=hf_token, 
+                    output_attentions=True,
+                    low_cpu_mem_usage=False
+                )
             
-            # Label Correction
+            # Label Correction - Set BEFORE moving to device
             if hasattr(model.config, 'num_labels') and model.config.num_labels == 2:
                 model.config.id2label = {0: "FAKE", 1: "REAL"}
                 model.config.label2id = {"FAKE": 0, "REAL": 1}
@@ -138,70 +148,67 @@ def compute_swin_heatmap(attentions):
         last_stage_att = attentions[-1].detach().cpu()
         att_map = last_stage_att.mean(dim=1).squeeze(0)
         importance = att_map.sum(dim=0)
-        side = int(importance.shape[0] ** 0.5)
-        if side == 0: return np.zeros((224, 224), dtype=np.float32)
-        mask = importance.reshape(side, side).numpy()
-        return mask.astype(np.float32)
+        s = int(np.sqrt(importance.size(0)))
+        return importance.view(s, s).numpy()
+    except Exception:
+        return None
+
+def upload_to_supabase(image_data: str, bucket: str, folder: str = "") -> tuple[str | None, str | None]:
+    """Helper to upload base64 image data to Supabase Storage."""
+    try:
+        if "," in image_data:
+            header, encoded = image_data.split(",", 1)
+            file_ext = header.split("/")[1].split(";")[0]
+            content = base64.b64decode(encoded)
+        else:
+            content = base64.b64decode(image_data)
+            file_ext = "jpg"
+
+        file_path = f"{folder}/{uuid.uuid4()}.{file_ext}" if folder else f"{uuid.uuid4()}.{file_ext}"
+        
+        supabase.storage.from_(bucket).upload(file_path, content, {"content-type": f"image/{file_ext}"})
+        public_url = supabase.storage.from_(bucket).get_public_url(file_path)
+        return public_url, None
     except Exception as e:
-        print(f"Swin heatmap error: {e}")
-        return np.zeros((224, 224), dtype=np.float32)
+        return None, str(e)
 
 @app.route('/api/users/sync', methods=['POST'])
 def sync_user():
-    data = request.json
-    user_data = {
-        "firebase_uid": data.get("firebase_uid"),
-        "email": data.get("email"),
-        "name": data.get("name"),
-        "profile_pic_url": data.get("profile_pic_url"),
-        "bio": data.get("bio"),
-        "save_history": data.get("save_history", True)
-    }
+    user_data = request.json
+    if not user_data or "firebase_uid" not in user_data:
+        return jsonify({"error": "Missing user data"}), 400
+    
     try:
-        user_data = {k: v for k, v in user_data.items() if v is not None}
+        # Sync to Supabase
         supabase.table("users").upsert(user_data, on_conflict="firebase_uid").execute()
+        # Sync to Firebase if available
         if db: db.collection("users").document(user_data["firebase_uid"]).set(user_data, merge=True)
         return jsonify({"message": "User synced successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/users/<uid>', methods=['GET'])
-def get_user(uid):
+def get_user_profile(uid):
     try:
-        user = supabase.table("users").select("*").eq("firebase_uid", uid).single().execute()
-        return jsonify(user.data), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 404
-
-@app.route('/api/upload/scan', methods=['POST'])
-def upload_scan():
-    data = request.json
-    uid = data.get('firebase_uid', 'guest')
-    original_base64 = data.get('original_image')
-    heatmap_base64 = data.get('heatmap_image')
-    
-    results = {}
-    if original_base64:
-        url, err = upload_to_supabase(original_base64, "heatmaps", folder=f"{uid}/original")
-        if not err: results["original_url"] = url
+        # Try fetching from Supabase
+        res = supabase.table("users").select("*").eq("firebase_uid", uid).execute()
         
-    if heatmap_base64:
-        # Check if it's already a URL or base64
-        if heatmap_base64.startswith("http"):
-            results["heatmap_url"] = heatmap_base64
-        else:
-            url, err = upload_to_supabase(heatmap_base64, "heatmaps", folder=uid)
-            if not err: results["heatmap_url"] = url
+        if res.data and len(res.data) > 0:
+            return jsonify(res.data[0]), 200
             
-    return jsonify(results), 200
-
-@app.route('/api/scans/save', methods=['POST'])
-def save_scan():
-    data = request.json
-    try:
-        supabase.table("scans").insert(data).execute()
-        return jsonify({"message": "Scan saved successfully"}), 200
+        # Self-healing: If not in Supabase, try to get basic info from Firebase
+        if db:
+            print(f"DEBUG: Profile {uid} missing in Supabase. Attempting self-healing from Firebase...")
+            user_ref = db.collection("users").document(uid).get()
+            if user_ref.exists:
+                user_data = user_ref.to_dict()
+                # Auto-sync back to Supabase
+                supabase.table("users").upsert(user_data).execute()
+                return jsonify(user_data), 200
+                
+        return jsonify({"error": "Profile not found"}), 404
     except Exception as e:
+        print(f"DEBUG: Profile fetch error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/scans/history/<uid>', methods=['GET'])
@@ -212,74 +219,87 @@ def get_history(uid):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/scans/history/<uid>', methods=['DELETE'])
-def clear_history(uid):
+@app.route('/api/scans/save', methods=['POST'])
+def save_scan():
+    data = request.json
     try:
-        supabase.table("scans").delete().eq("firebase_uid", uid).execute()
-        return jsonify({"message": "History cleared"}), 200
+        res = supabase.table("scans").insert(data).execute()
+        return jsonify(res.data), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-def upload_to_supabase(base64_str, bucket, folder=""):
-    try:
-        if not base64_str or not base64_str.startswith("data:image"): return None, "Invalid image data"
-        match = re.search(r'data:image/(\w+);base64,(.*)', base64_str)
-        if not match: return None, "Malformed base64 string"
-        ext = match.group(1)
-        img_data = base64.b64decode(match.group(2))
-        file_name = f"{folder}/{uuid.uuid4()}.{ext}" if folder else f"{uuid.uuid4()}.{ext}"
-        supabase.storage.from_(bucket).upload(file_name, img_data, {"content-type": f"image/{ext}"})
-        public_url = supabase.storage.from_(bucket).get_public_url(file_name)
-        return public_url, None
-    except Exception as e:
-        return None, str(e)
-
 @app.route('/api/detect', methods=['POST'])
 def detect_deepfake():
+    global deepfake_pipeline
     data = request.json
+    if not data or 'image' not in data:
+        return jsonify({"error": "No image provided"}), 400
+
     base64_image = data.get('image')
     firebase_uid = data.get('firebase_uid', 'guest')
-
-    if not base64_image:
-        return jsonify({"error": "Missing image data"}), 400
-
+    model_type_used = data.get('model_type', 'ViT')
+    
     try:
-        model_type_used = data.get('model_type', 'ViT')
         m, p, t, loaded_name = get_model(model_type_used)
         if m is None: return jsonify({"error": "Model load failed"}), 503
-            
-        global deepfake_pipeline
+        
+        # Initialize pipeline singleton or update if model changed
         if deepfake_pipeline is None or deepfake_pipeline.model is not m:
             deepfake_pipeline = DeepfakePipeline(m, p, DEVICE)
 
-        image_content = base64_image.split(',')[1] if ',' in base64_image else base64_image
+        # Process image
+        if base64_image.startswith('data:image'):
+            image_content = base64_image.split(',')[1]
+        else:
+            image_content = base64_image
+        
         img_data = base64.b64decode(image_content)
         image = Image.open(io.BytesIO(img_data)).convert("RGB")
         
         start_time = time.time()
         
         # heatmap first (to get outside_fraction)
-        inputs_full = p(images=image, return_tensors="pt").to(DEVICE)
+        if p is None:
+            logger.error("Image processor is None - cannot process image")
+            return jsonify({"error": "System configuration error: Image processor missing"}), 500
+
+        try:
+            processed_inputs = p(images=image, return_tensors="pt")
+            if processed_inputs is None:
+                raise ValueError("Image processor returned None")
+            inputs_full = processed_inputs.to(DEVICE)
+        except Exception as e:
+            logger.error(f"Failed to process image: {e}")
+            traceback.print_exc()
+            return jsonify({"error": f"Image processing failed: {str(e)}"}), 500
+
         with torch.no_grad():
             outputs_full = m(**inputs_full, output_attentions=True)
             attentions = outputs_full.attentions
             probs_full = torch.softmax(outputs_full.logits, dim=-1).squeeze()
             label2id = getattr(m.config, 'label2id', {})
-            global_fake_prob = float(probs_full[label2id.get("FAKE", 0)].item())
+            # Ensure index exists
+            fake_idx = label2id.get("FAKE", 0)
+            if isinstance(probs_full, torch.Tensor) and probs_full.dim() > 0:
+                global_fake_prob = float(probs_full[fake_idx].item())
+            else:
+                global_fake_prob = float(probs_full.item())
 
         mask = None
         outside_fraction = 0.0
         if attentions:
             try:
-                if "Swin" in str(type(m)): mask = compute_swin_heatmap(attentions)
+                if "Swin" in str(type(m)):
+                    mask = compute_swin_heatmap(attentions)
                 else:
                     rollout = compute_vit_rollout(attentions)
                     mask_raw = rollout[0, 1:]
-                    s = int(mask_raw.shape[0] ** 0.5)
+                    s = int(np.sqrt(mask_raw.size(0)))
                     mask = mask_raw.reshape(s, s).cpu().numpy()
                 
-                if mask.max() > mask.min(): mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
-                mask = cv2.resize(mask, image.size)
+                if mask is not None:
+                    mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
+                    mask = cv2.resize(mask, image.size)
             except Exception as e: print(f"Heatmap error: {e}")
 
         # Run pipeline with attention awareness
@@ -298,34 +318,38 @@ def detect_deepfake():
             face_mask = np.zeros(mask.shape, dtype=bool)
             for f in face_list:
                 x1, y1, x2, y2 = f["box"]
-                face_mask[max(0, y1):min(mask.shape[0], y2), max(0, x1):min(mask.shape[1], x2)] = True
+                face_mask[y1:y2, x1:x2] = True
+            
             total_att = mask.sum()
             if total_att > 1e-8:
                 outside_fraction = float(mask[~face_mask].sum() / total_att)
 
-        # Draw visualisations
         overlay = None
         heatmap_url = None
-        if mask is not None:
-            heatmap = cv2.applyColorMap(np.uint8(255 * mask), cv2.COLORMAP_JET)
-            img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
-            overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
-            overlay = DeepfakePipeline.draw_face_boxes(image, pipeline_result, heatmap_bgr=overlay)
-            _, buf = cv2.imencode('.jpg', overlay)
-            heatmap_url, _ = upload_to_supabase(f"data:image/jpeg;base64,{base64.b64encode(buf).decode()}", "heatmaps", folder=firebase_uid)
-
         facemesh_url = None
-        facemesh_img = DeepfakePipeline.draw_face_mesh(image, face_list)
-        _, fmb = cv2.imencode('.jpg', facemesh_img)
-        facemesh_url, _ = upload_to_supabase(f"data:image/jpeg;base64,{base64.b64encode(fmb).decode()}", "heatmaps", folder=f"{firebase_uid}/facemesh")
+        
+        if mask is not None:
+            try:
+                heatmap = (mask * 255).astype(np.uint8)
+                heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+                img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
+                overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
+                overlay = DeepfakePipeline.draw_face_boxes(image, pipeline_result, heatmap_bgr=overlay)
+                
+                _, buf = cv2.imencode(".jpg", overlay)
+                heatmap_url, _ = upload_to_supabase(f"data:image/jpeg;base64,{base64.b64encode(buf).decode()}", "heatmaps", folder=firebase_uid)
+                
+                facemesh_img = DeepfakePipeline.draw_face_mesh(image, face_list)
+                if facemesh_img is not None:
+                    _, fmb = cv2.imencode(".jpg", cv2.cvtColor(np.array(facemesh_img), cv2.COLOR_RGB2BGR))
+                    facemesh_url, _ = upload_to_supabase(f"data:image/jpeg;base64,{base64.b64encode(fmb).decode()}", "heatmaps", folder=f"{firebase_uid}/facemesh")
+            except Exception as e: print(f"Visualization error: {e}")
 
-        # Step 3 — Aggregation
+        inference_time = round((time.time() - start_time) * 1000)
+        conf_pct = pipeline_result["confidence"]
         final_label = pipeline_result["final_label"]
-        display_score = pipeline_result["confidence"]
-        conf_pct = round(display_score * 100, 2)
-        inference_time = int((time.time() - start_time) * 1000)
 
-        # Forensic Interpretation & Evidence Building
+        # Build Forensic Evidence Packet
         interpreter = ForensicInterpreter()
         face_interpretations = [interpreter.interpret_face(f, mask, global_fake_prob) for f in face_list]
         evidence_packet = EvidenceBuilder.build(
@@ -337,6 +361,8 @@ def detect_deepfake():
             global_fake_prob=global_fake_prob
         )
 
+        # Generate LLM Explanation
+        img_data = base64.b64decode(image_content)
         structured_explanation = provider_router.get_explanation(
             evidence_packet=evidence_packet,
             image=image,

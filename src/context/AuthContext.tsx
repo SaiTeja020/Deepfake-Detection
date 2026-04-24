@@ -48,20 +48,33 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
             setUser(currentUser);
-            // Don't block initial app render on backend profile API.
-            setLoading(false);
+            
             if (currentUser) {
-                // Fetch profile when user logs in
-                try {
-                    const data = await getUserProfile(currentUser.uid);
-                    setProfile(data);
-                } catch (err) {
-                    console.error("Initial profile fetch failed:", err);
-                    setProfile(null);
+                // Fetch profile with retries
+                let retries = 3;
+                let success = false;
+                while (retries > 0 && !success) {
+                    try {
+                        const data = await getUserProfile(currentUser.uid);
+                        setProfile(data);
+                        success = true;
+                    } catch (err) {
+                        retries--;
+                        if (retries > 0) {
+                            console.warn(`Profile fetch failed, retrying... (${retries} left)`);
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        } else {
+                            console.error("Initial profile fetch failed after retries:", err);
+                            setProfile(null);
+                        }
+                    }
                 }
             } else {
                 setProfile(null);
             }
+            
+            // Only stop loading after we've tried to get the profile
+            setLoading(false);
         });
 
         return () => unsubscribe();

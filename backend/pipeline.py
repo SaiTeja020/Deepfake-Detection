@@ -201,7 +201,14 @@ class DeepfakePipeline:
         Returns explicit probabilities for REAL and FAKE instead of argmax confidence.
         """
         try:
-            inputs = self.processor(images=face_crop, return_tensors="pt").to(self.device)
+            if self.processor is None:
+                raise ValueError("DeepfakePipeline: processor is None")
+            
+            proc_out = self.processor(images=face_crop, return_tensors="pt")
+            if proc_out is None:
+                raise ValueError("DeepfakePipeline: processor returned None")
+                
+            inputs = proc_out.to(self.device)
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 logits = outputs.logits

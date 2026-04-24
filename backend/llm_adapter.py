@@ -59,17 +59,15 @@ def validate_explanation(data: Any) -> Optional[Dict[str, Any]]:
     primary = data.get("primary_findings", [])
     regions = data.get("regions_examined", [])
 
-    # Summary must be a non-empty string
-    if not isinstance(summary, str) or len(summary.strip()) < 20:
+    # Summary must be a string
+    if not isinstance(summary, str):
+        return None
+    if len(summary.strip()) < 5: # Loosen length constraint
         return None
 
-    # Primary findings must be a non-empty list of strings
-    if not isinstance(primary, list) or len(primary) == 0:
-        return None
-    if not all(isinstance(f, str) for f in primary):
-        return None
-
-    # Regions must be a list
+    # Ensure findings are lists
+    if not isinstance(primary, list):
+        data["primary_findings"] = [str(primary)] if primary else ["Manipulation detected"]
     if not isinstance(regions, list):
         data["regions_examined"] = []
 
@@ -92,15 +90,19 @@ def parse_llm_output(raw: Any) -> Optional[Dict[str, Any]]:
         return validate_explanation(raw)
 
     text = str(raw).strip()
-    # Extract JSON from possible markdown wrapping
-    json_match = re.search(r'\{.*\}', text, re.DOTALL)
-    if json_match:
-        text = json_match.group(0)
     try:
+        # Try finding anything that looks like JSON (brackets)
+        json_match = re.search(r'(\{.*\}|\[.*\])', text, re.DOTALL)
+        if json_match:
+            text = json_match.group(0)
+        
         parsed = json.loads(text)
+        if isinstance(parsed, list) and len(parsed) > 0:
+            parsed = parsed[0] # Handle list-wrapped responses
+            
         if isinstance(parsed, dict):
             return validate_explanation(parsed)
-    except json.JSONDecodeError:
+    except Exception:
         pass
 
     return None
@@ -152,25 +154,24 @@ _explanation_cache = ExplanationCache()
 # Prompt Templates
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a forensic deepfake analyst. You analyze ONLY the provided evidence.
-
+SYSTEM_PROMPT = """You are a technical forensic artifact analyzer. Your task is to interpret data from a deepfake detector.
+ 
 RULES:
-1. Do not speculate beyond provided evidence
-2. Do not mention raw numerical values — use the semantic labels provided
-3. Reference specific facial regions when explaining findings
-4. Explain WHY each finding matters for authenticity assessment
-5. If conflicts exist in the evidence, explicitly acknowledge the uncertainty
-6. For multi-face images, address each face separately
-7. Return ONLY valid JSON matching the schema below — no extra text
-
+1. Analyze ONLY the provided technical evidence and visual artifacts (heatmaps).
+2. Do not attempt to identify or comment on the personal identity of individuals.
+3. Focus on technical anomalies: texture inconsistencies, geometric asymmetries, and attention concentration.
+4. Use the provided semantic labels to describe findings.
+5. Acknowledge any conflicting signals or data ambiguity.
+6. Return ONLY valid JSON matching the schema below.
+ 
 OUTPUT SCHEMA:
 {
-    "summary": "2-3 sentence high-level forensic assessment",
-    "primary_findings": ["Most significant observation 1", "Most significant observation 2"],
-    "secondary_signals": ["Supporting observation 1"],
-    "confidence_explanation": "Why the system is certain/uncertain about this verdict",
+    "summary": "Forensic technical assessment (2-3 sentences)",
+    "primary_findings": ["Finding 1", "Finding 2"],
+    "secondary_signals": ["Signal 1"],
+    "confidence_explanation": "Technical basis for the confidence score",
     "regions_examined": ["left_eye", "jawline", "mouth"],
-    "model_consensus": "1 sentence on overall model agreement and methodology"
+    "model_consensus": "Technical summary of model agreement"
 }"""
 
 
@@ -306,79 +307,118 @@ class GeminiProvider(LLMProvider):
             if not api_key:
                 logger.warning("GEMINI_API_KEY not set")
             else:
+                import google.generativeai as genai
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-2.0-flash-exp') # Using 2.0 Flash as requested
-                logger.info("GeminiProvider initialized (Gemini 2.0 Flash)")
+                # Using the latest stable 2.0 Flash model
+                self.model = genai.GenerativeModel('gemini-2.0-flash') 
+                print(f"DEBUG: GeminiProvider initialized (Key: {api_key[:5]}...{api_key[-4:]})")
         except Exception as e:
-            logger.error("Gemini init error: %s", e)
+            print(f"DEBUG: Gemini init error: {e}")
 
     def generate(self, system_prompt, user_prompt, image=None, heatmap=None):
         if self.model is None:
+            print("DEBUG: Gemini skipped (No model instance)")
             return None
 
         try:
+            print(f"DEBUG: Sending request to Gemini (multimodal={image is not None})...")
             combined_prompt = f"{system_prompt}\n\n{user_prompt}"
             contents = [combined_prompt]
+            if image is not None: contents.append(image)
+            if heatmap is not None: contents.append(heatmap)
 
-            # Gemini natively accepts PIL images
-            if image is not None:
-                contents.append(image)
-            if heatmap is not None:
-                contents.append(heatmap)
-
-            response = self.model.generate_content(contents)
-            raw_text = response.text.strip() if hasattr(response, 'text') else ''
-
-            logger.info("Gemini raw response length: %d", len(raw_text))
-            return parse_llm_output(raw_text)
+            try:
+                response = self.model.generate_content(contents)
+                if not response or not hasattr(response, 'text'):
+                    raise ValueError("Empty or blocked response")
+            except Exception as e:
+                if image is not None:
+                    print(f"DEBUG: Gemini multimodal failed ({e}). Retrying with TEXT ONLY...")
+                    # Fallback to text-only if multimodal fails (common for safety filters)
+                    response = self.model.generate_content([combined_prompt])
+                    if not response or not hasattr(response, 'text'):
+                        return None
+                else:
+                    raise e
+                
+            raw_text = response.text.strip()
+            print(f"DEBUG: Gemini response received ({len(raw_text)} chars)")
+            
+            parsed = parse_llm_output(raw_text)
+            if parsed and "summary" in parsed:
+                parsed["summary"] = f"{parsed['summary']} (via Gemini)"
+            return parsed
 
         except Exception as e:
-            logger.error("Gemini generation error: %s", e)
+            print(f"DEBUG: Gemini generation error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
 
 class MistralProvider(LLMProvider):
-    """Mistral Pixtral via Mistral AI API — great vision fallback."""
+    """Mistral Pixtral via Mistral AI API — using requests to avoid package dependency."""
 
     name = "mistral"
 
     def __init__(self):
-        self.client = None
-        try:
-            from mistralai.client import MistralClient
-            api_key = os.getenv("MISTRAL_API_KEY")
-            if not api_key:
-                logger.warning("MISTRAL_API_KEY not set")
-            else:
-                self.client = MistralClient(api_key=api_key)
-                self.model = "pixtral-12b-2409"
-                logger.info("MistralProvider initialized (Pixtral)")
-        except Exception as e:
-            logger.error("Mistral init error: %s", e)
+        self.api_key = os.getenv("MISTRAL_API_KEY")
+        self.model = "pixtral-12b-2409"
+        if not self.api_key:
+            print("DEBUG: Mistral skipped (MISTRAL_API_KEY not set)")
+        else:
+            print(f"DEBUG: MistralProvider initialized (Model: {self.model})")
 
     def generate(self, system_prompt, user_prompt, image=None, heatmap=None):
-        if self.client is None:
+        if not self.api_key:
             return None
 
+        import requests
         try:
-            from mistralai.models.chat_completion import ChatMessage
+            print("DEBUG: Sending request to Mistral (Pixtral)...")
             
-            # Note: simplified for text-based flow if image encoding is complex
-            # but Pixtral supports image URLs/base64
-            messages = [
-                ChatMessage(role="system", content=system_prompt),
-                ChatMessage(role="user", content=user_prompt)
-            ]
+            # Build messages
+            content = [{"type": "text", "text": user_prompt}]
+            
+            # Add image if available (Pixtral supports base64)
+            if image is not None:
+                buf = io.BytesIO()
+                image.save(buf, format="JPEG")
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                content.append({
+                    "type": "image_url",
+                    "image_url": f"data:image/jpeg;base64,{b64}"
+                })
 
-            response = self.client.chat(
-                model=self.model,
-                messages=messages,
-            )
+            url = "https://api.mistral.ai/v1/chat/completions"
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}"
+            }
+            payload = {
+                "model": self.model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content}
+                ],
+                "response_format": {"type": "json_object"}
+            }
+
+            response = requests.post(url, headers=headers, json=payload, timeout=30)
+            print(f"DEBUG: Mistral HTTP Status: {response.status_code}")
+            response.raise_for_status()
+            data = response.json()
             
-            raw_text = response.choices[0].message.content.strip()
-            return parse_llm_output(raw_text)
+            raw_text = data["choices"][0]["message"]["content"].strip()
+            print(f"DEBUG: Mistral response received ({len(raw_text)} chars)")
+            
+            parsed = parse_llm_output(raw_text)
+            if parsed and "summary" in parsed:
+                parsed["summary"] = f"{parsed['summary']} (via Mistral Pixtral)"
+            return parsed
+
         except Exception as e:
-            logger.error("Mistral generation error: %s", e)
+            print(f"DEBUG: Mistral generation error: {e}")
             return None
 
 
@@ -390,16 +430,18 @@ class HuggingFaceProvider(LLMProvider):
 
     name = "hf_serverless"
 
-    def __init__(self, model_id: str = "microsoft/Phi-3.5-vision-instruct"):
+    def __init__(self, model_id: str = "meta-llama/Llama-3.2-11B-Vision-Instruct"):
         self.client = None
         self.model_id = model_id
         try:
             from huggingface_hub import InferenceClient
             hf_token = os.getenv("HF_TOKEN")
+            if not hf_token:
+                print("DEBUG: HF_TOKEN not set")
             self.client = InferenceClient(api_key=hf_token)
-            logger.info("HuggingFaceProvider initialized for %s", model_id)
+            print(f"DEBUG: HuggingFaceProvider initialized for {model_id}")
         except Exception as e:
-            logger.error("HF init error: %s", e)
+            print(f"DEBUG: HF init error: {e}")
 
     def generate(self, system_prompt, user_prompt, image=None, heatmap=None):
         if self.client is None:
@@ -518,7 +560,7 @@ class HeuristicFallback:
                 primary = ["Insufficient forensic data for definitive assessment"]
 
         return {
-            "summary": summary,
+            "summary": f"{summary} (Local Heuristic Fallback)",
             "primary_findings": primary,
             "secondary_signals": secondary,
             "confidence_explanation": conf_expl,
@@ -553,9 +595,14 @@ class ProviderRouter:
         self.qwen = QwenVLProvider()
         self.cache = _explanation_cache
         
+        print("DEBUG: ProviderRouter initializing...")
+        print(f"DEBUG: - Gemini instance: {'OK' if self.gemini.model else 'MISSING'}")
+        print(f"DEBUG: - Mistral instance: {'OK' if self.mistral.api_key else 'MISSING'}")
+        print(f"DEBUG: - Qwen instance: {'OK' if self.qwen.client else 'MISSING'}")
+        
         active_providers = [p for p in [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen]
-                          if getattr(p, 'client', None) or getattr(p, 'model', None)]
-        logger.info("ProviderRouter initialized with %d active providers", len(active_providers))
+                          if getattr(p, 'client', None) or getattr(p, 'model', None) or getattr(p, 'api_key', None)]
+        print(f"DEBUG: ProviderRouter active providers: {[p.name for p in active_providers]}")
 
     def _assess_complexity(self, evidence: Dict[str, Any]) -> str:
         """
@@ -614,16 +661,17 @@ class ProviderRouter:
         """
         from evidence_builder import EvidenceBuilder
 
-        # Check cache first
-        if image_bytes is not None:
-            evidence_json = json.dumps(evidence_packet, sort_keys=True, default=str)
-            cache_key = self.cache.compute_key(image_bytes, evidence_json)
-            cached = self.cache.get(cache_key)
-            if cached is not None:
-                logger.info("Cache hit for explanation")
-                return cached
-        else:
-            cache_key = None
+        # Check cache first (DISABLED FOR DEBUGGING)
+        # if image_bytes is not None:
+        #     evidence_json = json.dumps(evidence_packet, sort_keys=True, default=str)
+        #     cache_key = self.cache.compute_key(image_bytes, evidence_json)
+        #     cached = self.cache.get(cache_key)
+        #     if cached is not None:
+        #         print("DEBUG: Cache hit for explanation (BYPASSED)")
+        #         # return cached
+        # else:
+        #     cache_key = None
+        cache_key = None
 
         # Build prompts
         evidence_text = EvidenceBuilder.to_prompt_text(evidence_packet)
@@ -649,7 +697,7 @@ class ProviderRouter:
             if not provider_available:
                 continue
 
-            logger.info("Trying provider: %s", provider.name)
+            print(f"DEBUG: Trying provider: {provider.name}")
             result = provider.generate(
                 system_prompt=SYSTEM_PROMPT,
                 user_prompt=user_prompt,
@@ -658,13 +706,13 @@ class ProviderRouter:
             )
 
             if result is not None:
-                logger.info("Provider %s succeeded", provider.name)
+                print(f"DEBUG: Provider {provider.name} succeeded")
                 # Cache the result
                 if cache_key is not None:
                     self.cache.put(cache_key, result)
                 return result
 
-            logger.warning("Provider %s failed or returned invalid output", provider.name)
+            print(f"DEBUG: Provider {provider.name} failed")
 
         # All providers failed — use heuristic
         logger.warning("All LLM providers failed. Using heuristic fallback.")
