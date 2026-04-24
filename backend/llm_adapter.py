@@ -4,16 +4,16 @@ LLM Explanation Adapter — v2 (Complete Rewrite)
 Provides structured forensic explanations for deepfake detection results.
 
 Architecture:
-    EvidencePacket → ProviderRouter → [QwenVL | Gemini | Grok | Heuristic]
+    EvidencePacket → ProviderRouter → [Gemini | Mistral | HF | Heuristic]
                                               ↓
                                      JSON Schema Validation
                                               ↓
                                     StructuredExplanation
 
 Providers:
-    Tier 1 (Default) — Qwen/Qwen2.5-VL-7B-Instruct (vision-language, HF Inference)
-    Tier 2 (Complex) — Gemini 1.5 Flash (multimodal, Google AI)
-    Tier 3 (Backup)  — Grok (xAI, OpenAI-compatible)
+    Tier 1 (Default) — Gemini 2.0 Flash (multimodal, Google AI)
+    Tier 2 (Fallback) — Mistral Pixtral-12B (vision-language, Mistral AI)
+    Tier 3 (Backup)   — HF Serverless (Phi-3.5-Vision / LLaVA-v1.6)
     Tier 4 (Disaster) — Heuristic fallback (no API calls)
 
 Features:
