@@ -337,58 +337,6 @@ class GeminiProvider(LLMProvider):
             return None
 
 
-class GrokProvider(LLMProvider):
-    """xAI Grok via OpenAI-compatible API."""
-
-    name = "grok"
-
-    def __init__(self):
-        self.client = None
-        try:
-            from openai import OpenAI
-            api_key = os.getenv("XAI_API_KEY")
-            if not api_key:
-                logger.warning("XAI_API_KEY not set for GrokProvider")
-            else:
-                self.client = OpenAI(
-                    api_key=api_key,
-                    base_url="https://api.x.ai/v1",
-                )
-                logger.info("GrokProvider initialized")
-        except ImportError:
-            logger.warning("openai package not installed — GrokProvider unavailable")
-        except Exception as e:
-            logger.error("Grok init error: %s", e)
-
-    def generate(self, system_prompt, user_prompt, image=None, heatmap=None):
-        if self.client is None:
-            return None
-
-        try:
-            # Grok is text-only via the standard chat completions endpoint
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ]
-
-            response = self.client.chat.completions.create(
-                model="grok-3-mini",
-                messages=messages,
-                max_tokens=500,
-            )
-
-            raw_text = ""
-            if response and response.choices:
-                raw_text = response.choices[0].message.content.strip()
-
-            logger.info("Grok raw response length: %d", len(raw_text))
-            return parse_llm_output(raw_text)
-
-        except Exception as e:
-            logger.error("Grok generation error: %s", e)
-            return None
-
-
 class MistralProvider(LLMProvider):
     """Mistral Pixtral via Mistral AI API — great vision fallback."""
 
@@ -603,10 +551,9 @@ class ProviderRouter:
         self.hf_phi = HuggingFaceProvider("microsoft/Phi-3.5-vision-instruct")
         self.hf_llava = HuggingFaceProvider("llava-hf/llava-v1.6-mistral-7b-hf")
         self.qwen = QwenVLProvider()
-        self.grok = GrokProvider()
         self.cache = _explanation_cache
         
-        active_providers = [p for p in [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen, self.grok]
+        active_providers = [p for p in [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen]
                           if getattr(p, 'client', None) or getattr(p, 'model', None)]
         logger.info("ProviderRouter initialized with %d active providers", len(active_providers))
 
@@ -638,7 +585,7 @@ class ProviderRouter:
         Gemini (Free) -> Mistral (Free) -> HF Phi (Free) -> HF LLaVA (Free)
         """
         # Primary is always Gemini Flash (highest free quota/quality)
-        order = [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen, self.grok]
+        order = [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen]
         
         if complexity == "complex":
             # For complex cases, we might prefer Mistral Pixtral over Phi
