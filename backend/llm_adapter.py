@@ -307,8 +307,8 @@ class GeminiProvider(LLMProvider):
                 logger.warning("GEMINI_API_KEY not set")
             else:
                 genai.configure(api_key=api_key)
-                self.model = genai.GenerativeModel('gemini-1.5-flash-latest')
-                logger.info("GeminiProvider initialized")
+                self.model = genai.GenerativeModel('gemini-2.0-flash-exp') # Using 2.0 Flash as requested
+                logger.info("GeminiProvider initialized (Gemini 2.0 Flash)")
         except Exception as e:
             logger.error("Gemini init error: %s", e)
 
@@ -389,6 +389,91 @@ class GrokProvider(LLMProvider):
             return None
 
 
+class MistralProvider(LLMProvider):
+    """Mistral Pixtral via Mistral AI API — great vision fallback."""
+
+    name = "mistral"
+
+    def __init__(self):
+        self.client = None
+        try:
+            from mistralai.client import MistralClient
+            api_key = os.getenv("MISTRAL_API_KEY")
+            if not api_key:
+                logger.warning("MISTRAL_API_KEY not set")
+            else:
+                self.client = MistralClient(api_key=api_key)
+                self.model = "pixtral-12b-2409"
+                logger.info("MistralProvider initialized (Pixtral)")
+        except Exception as e:
+            logger.error("Mistral init error: %s", e)
+
+    def generate(self, system_prompt, user_prompt, image=None, heatmap=None):
+        if self.client is None:
+            return None
+
+        try:
+            from mistralai.models.chat_completion import ChatMessage
+            
+            # Note: simplified for text-based flow if image encoding is complex
+            # but Pixtral supports image URLs/base64
+            messages = [
+                ChatMessage(role="system", content=system_prompt),
+                ChatMessage(role="user", content=user_prompt)
+            ]
+
+            response = self.client.chat(
+                model=self.model,
+                messages=messages,
+            )
+            
+            raw_text = response.choices[0].message.content.strip()
+            return parse_llm_output(raw_text)
+        except Exception as e:
+            logger.error("Mistral generation error: %s", e)
+            return None
+
+
+class HuggingFaceProvider(LLMProvider):
+    """
+    HF Serverless Inference for Phi-3.5-Vision or LLaVA-v1.6.
+    Free, slow, but a solid zero-budget backup.
+    """
+
+    name = "hf_serverless"
+
+    def __init__(self, model_id: str = "microsoft/Phi-3.5-vision-instruct"):
+        self.client = None
+        self.model_id = model_id
+        try:
+            from huggingface_hub import InferenceClient
+            hf_token = os.getenv("HF_TOKEN")
+            self.client = InferenceClient(api_key=hf_token)
+            logger.info("HuggingFaceProvider initialized for %s", model_id)
+        except Exception as e:
+            logger.error("HF init error: %s", e)
+
+    def generate(self, system_prompt, user_prompt, image=None, heatmap=None):
+        if self.client is None:
+            return None
+
+        try:
+            # We use the text-based bridge since serverless vision can be flaky with multi-image
+            # The user_prompt already contains the Spatial Evidence Report
+            combined = f"{system_prompt}\n\n{user_prompt}"
+            
+            response = self.client.text_generation(
+                combined,
+                model=self.model_id,
+                max_new_tokens=500,
+            )
+            
+            return parse_llm_output(response)
+        except Exception as e:
+            logger.error("HF Serverless (%s) error: %s", self.model_id, e)
+            return None
+
+
 # ---------------------------------------------------------------------------
 # Heuristic Fallback — uses ForensicInterpreter output, NOT raw metrics
 # ---------------------------------------------------------------------------
@@ -448,6 +533,17 @@ class HeuristicFallback:
                 f"The {model_type} architecture confirmed facial structure authenticity with {confidence}% confidence."
             )
 
+        # Enhance with biometric signals if available
+        biometric_notes = []
+        for face in faces:
+            if face.get("geometric_status") == "anomalous":
+                biometric_notes.append(f"Face {face['face_id']} showed structural anomalies.")
+            if face.get("conflicts"):
+                biometric_notes.append("Conflicting forensic signals were detected.")
+        
+        if biometric_notes:
+            summary += " " + " ".join(biometric_notes)
+
         # Build confidence explanation
         if all_conflicts:
             conf_expl = (
@@ -502,13 +598,17 @@ class ProviderRouter:
     """
 
     def __init__(self):
-        self.qwen = QwenVLProvider()
         self.gemini = GeminiProvider()
+        self.mistral = MistralProvider()
+        self.hf_phi = HuggingFaceProvider("microsoft/Phi-3.5-vision-instruct")
+        self.hf_llava = HuggingFaceProvider("llava-hf/llava-v1.6-mistral-7b-hf")
+        self.qwen = QwenVLProvider()
         self.grok = GrokProvider()
         self.cache = _explanation_cache
-        logger.info("ProviderRouter initialized with %d active providers",
-                     sum(1 for p in [self.qwen, self.gemini, self.grok]
-                         if getattr(p, 'client', None) or getattr(p, 'model', None)))
+        
+        active_providers = [p for p in [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen, self.grok]
+                          if getattr(p, 'client', None) or getattr(p, 'model', None)]
+        logger.info("ProviderRouter initialized with %d active providers", len(active_providers))
 
     def _assess_complexity(self, evidence: Dict[str, Any]) -> str:
         """
@@ -533,16 +633,18 @@ class ProviderRouter:
             return "simple"
 
     def _get_provider_order(self, complexity: str) -> List[LLMProvider]:
-        """Determine provider cascade based on complexity."""
+        """
+        Determine provider cascade based on zero-budget priorities:
+        Gemini (Free) -> Mistral (Free) -> HF Phi (Free) -> HF LLaVA (Free)
+        """
+        # Primary is always Gemini Flash (highest free quota/quality)
+        order = [self.gemini, self.mistral, self.hf_phi, self.hf_llava, self.qwen, self.grok]
+        
         if complexity == "complex":
-            # Complex cases benefit from Gemini's multimodal inspection
-            return [self.gemini, self.qwen, self.grok]
-        elif complexity == "moderate":
-            # Moderate: try Qwen VL first (it's also multimodal), fall back to Gemini
-            return [self.qwen, self.gemini, self.grok]
+            # For complex cases, we might prefer Mistral Pixtral over Phi
+            return [self.gemini, self.mistral, self.hf_llava, self.hf_phi, self.qwen]
         else:
-            # Simple: Qwen VL is fastest
-            return [self.qwen, self.gemini, self.grok]
+            return order
 
     def get_explanation(
         self,

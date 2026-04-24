@@ -150,6 +150,48 @@ class EvidenceBuilder:
         }
 
     @staticmethod
+    def generate_spatial_report(evidence: Dict[str, Any]) -> str:
+        """
+        Synthesizes biometric mesh anomalies and heatmap distributions 
+        into a narrative 'Visual-to-Textual' bridge for the LLM.
+        """
+        report_lines = ["--- SPATIAL EVIDENCE REPORT ---"]
+        
+        for face in evidence.get("faces", []):
+            face_id = face["face_id"]
+            geom_status = face["geometric_status"]
+            regions = face.get("regions_of_interest", [])
+            
+            report_lines.append(f"Face {face_id} Spatial Analysis:")
+            
+            # 1. Mesh interpretation
+            if geom_status == "anomalous":
+                report_lines.append(f"  - Biometric Mesh: Anomalous geometry detected.")
+                for pf in face.get("primary_findings", []):
+                    if "asymmetry" in pf.lower() or "spacing" in pf.lower():
+                        report_lines.append(f"    - Structural Detail: {pf}")
+            else:
+                report_lines.append(f"  - Biometric Mesh: Consistent biological geometry.")
+
+            # 2. Heatmap/Attention interpretation
+            if regions:
+                report_lines.append(f"  - Heatmap Focus: Primary attention localized on {', '.join(r.replace('_', ' ') for r in regions)}.")
+                
+                # Check for asymmetry in attention
+                for pf in face.get("primary_findings", []):
+                    if "asymmetry detected" in pf.lower():
+                        report_lines.append(f"    - Attention Detail: Significant lateralization in model activation.")
+
+            # 3. Conflict synthesis
+            for conflict in face.get("conflicts", []):
+                report_lines.append(f"  - Spatial Conflict: {conflict.replace('_', ' ').capitalize()}")
+
+        if not evidence.get("faces"):
+            report_lines.append("No faces detected for spatial analysis.")
+
+        return "\n".join(report_lines)
+
+    @staticmethod
     def to_prompt_text(evidence: Dict[str, Any]) -> str:
         """
         Render the evidence packet as a clean, readable text block
@@ -207,5 +249,8 @@ class EvidenceBuilder:
                 f"  Verdict agreement: {'Yes' if cfa.get('verdict_agreement') else 'No'}"
             )
             lines.append(f"  Max score delta: {cfa.get('max_score_delta', 0):.2f}")
+
+        lines.append("")
+        lines.append(EvidenceBuilder.generate_spatial_report(evidence))
 
         return "\n".join(lines)

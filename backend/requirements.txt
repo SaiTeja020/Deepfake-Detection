@@ -17,3 +17,5 @@ mediapipe==0.10.11
 opencv-contrib-python==4.10.0.84
 matplotlib>=3.5.0
 openai>=1.0.0
+mistralai
+huggingface_hub
