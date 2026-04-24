@@ -165,6 +165,61 @@ def sync_user():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/users/<uid>', methods=['GET'])
+def get_user(uid):
+    try:
+        user = supabase.table("users").select("*").eq("firebase_uid", uid).single().execute()
+        return jsonify(user.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 404
+
+@app.route('/api/upload/scan', methods=['POST'])
+def upload_scan():
+    data = request.json
+    uid = data.get('firebase_uid', 'guest')
+    original_base64 = data.get('original_image')
+    heatmap_base64 = data.get('heatmap_image')
+    
+    results = {}
+    if original_base64:
+        url, err = upload_to_supabase(original_base64, "heatmaps", folder=f"{uid}/original")
+        if not err: results["original_url"] = url
+        
+    if heatmap_base64:
+        # Check if it's already a URL or base64
+        if heatmap_base64.startswith("http"):
+            results["heatmap_url"] = heatmap_base64
+        else:
+            url, err = upload_to_supabase(heatmap_base64, "heatmaps", folder=uid)
+            if not err: results["heatmap_url"] = url
+            
+    return jsonify(results), 200
+
+@app.route('/api/scans/save', methods=['POST'])
+def save_scan():
+    data = request.json
+    try:
+        supabase.table("scans").insert(data).execute()
+        return jsonify({"message": "Scan saved successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scans/history/<uid>', methods=['GET'])
+def get_history(uid):
+    try:
+        history = supabase.table("scans").select("*").eq("firebase_uid", uid).order("created_at", desc=True).execute()
+        return jsonify(history.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/scans/history/<uid>', methods=['DELETE'])
+def clear_history(uid):
+    try:
+        supabase.table("scans").delete().eq("firebase_uid", uid).execute()
+        return jsonify({"message": "History cleared"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 def upload_to_supabase(base64_str, bucket, folder=""):
     try:
         if not base64_str or not base64_str.startswith("data:image"): return None, "Invalid image data"
@@ -228,7 +283,14 @@ def detect_deepfake():
             except Exception as e: print(f"Heatmap error: {e}")
 
         # Run pipeline with attention awareness
-        pipeline_result = deepfake_pipeline.run(image, outside_fraction=mask.mean() if mask is not None else 0.0)
+        try:
+            mask_val = float(mask.mean()) if mask is not None else 0.0
+            pipeline_result = deepfake_pipeline.run(image, outside_fraction=mask_val)
+        except Exception as e:
+            logger.error(f"Pipeline run failed: {e}")
+            traceback.print_exc()
+            return jsonify({"error": f"Pipeline analysis failed: {str(e)}"}), 500
+
         face_list = pipeline_result["faces"]
         
         # Calculate outside_fraction properly using face boxes
@@ -267,7 +329,7 @@ def detect_deepfake():
         interpreter = ForensicInterpreter()
         face_interpretations = [interpreter.interpret_face(f, mask, global_fake_prob) for f in face_list]
         evidence_packet = EvidenceBuilder.build(
-            verdict="Fake" if final_label in ["Deepfake", "Suspicious"] else final_label,
+            verdict=final_label, # Preserve nuance (Deepfake/Suspicious/Uncertain)
             confidence=conf_pct,
             faces=face_interpretations,
             attention_outside_faces=outside_fraction,
@@ -283,23 +345,32 @@ def detect_deepfake():
         )
         legacy = structured_to_legacy(structured_explanation)
 
-        serializable_faces = [{k: v for k, v in f.items() if not k.startswith('_')} for f in face_list]
+        serializable_faces = []
+        for f in face_list:
+            clean_face = {}
+            for k, v in f.items():
+                if k.startswith('_'): continue
+                if isinstance(v, (np.float32, np.float64)): clean_face[k] = float(v)
+                elif isinstance(v, (np.int32, np.int64)): clean_face[k] = int(v)
+                elif isinstance(v, dict): clean_face[k] = {sk: (float(sv) if isinstance(sv, (np.float32, np.float64)) else sv) for sk, sv in v.items()}
+                else: clean_face[k] = v
+            serializable_faces.append(clean_face)
 
         return jsonify({
-            "prediction": "Fake" if final_label in ["Deepfake", "Suspicious"] else final_label,
-            "confidence": conf_pct,
-            "inferenceTime": inference_time,
+            "prediction": str(final_label),
+            "confidence": float(conf_pct),
+            "inferenceTime": int(inference_time),
             "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400",
             "facemeshUrl": facemesh_url,
-            "explanation": legacy["explanation"],
+            "explanation": str(legacy["explanation"]),
             "suspicious_domains": legacy["suspicious_domains"],
-            "model_consensus": legacy["model_consensus"],
+            "model_consensus": str(legacy["model_consensus"]),
             "structured_explanation": structured_explanation,
-            "final_label": final_label,
+            "final_label": str(final_label),
             "faces": serializable_faces,
-            "face_count": len(face_list),
-            "no_faces_detected": pipeline_result.get("no_faces_detected", False),
-            "model_name": loaded_name
+            "face_count": int(len(face_list)),
+            "no_faces_detected": bool(pipeline_result.get("no_faces_detected", False)),
+            "model_name": str(loaded_name)
         }), 200
 
     except Exception as e:

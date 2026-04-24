@@ -377,7 +377,12 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
             <div className="space-y-12 animate-in fade-in duration-700">
               <div className="flex items-center justify-between">
                 <h3 className="text-[11px] font-bold uppercase tracking-[0.3em] text-blue-600 heading-font">Forensic Verdict</h3>
-                <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${result.prediction === 'Fake' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]' : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'}`}>
+                <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${
+                  result.prediction === 'Deepfake' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]' 
+                  : result.prediction === 'Suspicious' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                  : result.prediction === 'Uncertain' ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
+                  : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                }`}>
                   {result.prediction} IDENTIFIED
                 </div>
               </div>
@@ -395,7 +400,12 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                 </div>
                 <div className={`h-2.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-zinc-950' : 'bg-slate-100'}`}>
                   <div
-                    className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${result.prediction === 'Fake' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]' : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'}`}
+                    className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
+                      result.prediction === 'Deepfake' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]' 
+                      : result.prediction === 'Suspicious' ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+                      : result.prediction === 'Uncertain' ? 'bg-zinc-500'
+                      : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                    }`}
                     style={{ width: `${result.confidence}%` }}
                   />
                 </div>
