@@ -654,6 +654,9 @@ def detect_deepfake():
                 crop_quality = f.get('mtcnn_conf', 1.0)
                 geo_anomaly_score = f.get('geom_score', 0.0)
                 
+                w_local, w_global = dynamic_weight_gate(crop_quality)
+                logit_local = logit(fp)
+
                 # Attention map bias: if the model is "looking" outside the face too much, it's suspicious
                 # (suggests boundary artifacts common in face swaps)
                 attention_bias = 0.0

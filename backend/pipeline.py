@@ -97,8 +97,8 @@ class DeepfakePipeline:
     def _get_face_mesh(self):
         if self._face_mesh is None:
             try:
-                import mediapipe as mp
-                self._face_mesh = mp.solutions.face_mesh.FaceMesh(
+                import mediapipe.python.solutions.face_mesh as mp_fm
+                self._face_mesh = mp_fm.FaceMesh(
                     static_image_mode=True,
                     max_num_faces=1,
                     refine_landmarks=True,
@@ -568,9 +568,8 @@ class DeepfakePipeline:
         canvas = np.zeros((img_h, img_w, 3), dtype=np.uint8)
 
         try:
-            import mediapipe as mp
-            mp_drawing = mp.solutions.drawing_utils
-            mp_face_mesh = mp.solutions.face_mesh
+            import mediapipe.python.solutions.drawing_utils as mp_drawing
+            import mediapipe.python.solutions.face_mesh as mp_face_mesh
             drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1, color=(0, 255, 0))
 
             for face in face_results:
