@@ -214,7 +214,13 @@ def get_user_profile(uid):
 @app.route('/api/scans/history/<uid>', methods=['GET'])
 def get_history(uid):
     try:
-        history = supabase.table("scans").select("*").eq("firebase_uid", uid).order("created_at", desc=True).execute()
+        # First lookup internal user_id
+        user_res = supabase.table("users").select("id").eq("firebase_uid", uid).execute()
+        if not user_res.data:
+            return jsonify([]), 200
+            
+        user_uuid = user_res.data[0]["id"]
+        history = supabase.table("scan_history").select("*").eq("user_id", user_uuid).order("created_at", desc=True).execute()
         return jsonify(history.data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -223,8 +229,45 @@ def get_history(uid):
 def save_scan():
     data = request.json
     try:
-        res = supabase.table("scans").insert(data).execute()
+        # Translate firebase_uid to user_id for the database
+        fb_uid = data.pop("firebase_uid", None)
+        if fb_uid:
+            user_res = supabase.table("users").select("id").eq("firebase_uid", fb_uid).execute()
+            if user_res.data:
+                data["user_id"] = user_res.data[0]["id"]
+        
+        res = supabase.table("scan_history").insert(data).execute()
         return jsonify(res.data), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/upload/scan', methods=['POST'])
+def upload_scan_media():
+    data = request.json
+    if not data or "firebase_uid" not in data:
+        return jsonify({"error": "Missing data"}), 400
+    
+    uid = data["firebase_uid"]
+    original_base64 = data.get("original_image")
+    heatmap_base64 = data.get("heatmap_image")
+    
+    res = {}
+    try:
+        if original_base64:
+            url, err = upload_to_supabase(original_base64, "user-uploads", folder=uid)
+            if url: res["original_url"] = url
+            elif err: logger.error(f"Original upload failed: {err}")
+            
+        if heatmap_base64:
+            # If it's already a URL (from detection result), just pass it back
+            if heatmap_base64.startswith("http"):
+                res["heatmap_url"] = heatmap_base64
+            else:
+                url, err = upload_to_supabase(heatmap_base64, "heatmaps", folder=uid)
+                if url: res["heatmap_url"] = url
+                elif err: logger.error(f"Heatmap upload failed: {err}")
+                
+        return jsonify(res), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

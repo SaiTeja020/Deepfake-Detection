@@ -82,16 +82,25 @@ class DeepfakePipeline:
         if self._mtcnn is None:
             try:
                 from facenet_pytorch import MTCNN  # type: ignore
-                self._mtcnn = MTCNN(
-                    keep_all=True,
-                    device=self.device,
-                    min_face_size=20,
-                    thresholds=[0.6, 0.7, 0.7],
-                    post_process=False,
-                )
+                # Fix for "Cannot copy out of meta tensor" error:
+                # Force initialization on CPU using a context manager to ensure 
+                # weights are loaded into memory correctly.
+                with torch.device('cpu'):
+                    self._mtcnn = MTCNN(
+                        keep_all=True,
+                        device=torch.device('cpu'),
+                        min_face_size=20,
+                        thresholds=[0.6, 0.7, 0.7],
+                        post_process=False,
+                    )
+                
+                # Move to target device (e.g. CUDA) only after successful weight loading
+                if self.device.type != 'cpu':
+                    self._mtcnn.to(self.device)
+                    
                 logger.info("MTCNN initialised on %s", self.device)
-            except ImportError:
-                logger.warning("facenet-pytorch not installed — face detection unavailable")
+            except Exception as e:
+                logger.warning("MTCNN initialisation failed: %s. Face detection will be unavailable.", e)
                 self._mtcnn = None
         return self._mtcnn
 
