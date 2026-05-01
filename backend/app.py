@@ -37,7 +37,9 @@ CORS(app)
 
 # Supabase Configuration
 url: str = os.getenv("SUPABASE_URL")
-key: str = os.getenv("SUPABASE_KEY")
+key: str = os.getenv("SUPABASE_KEY") or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+logger.info(f"Supabase URL: {url}")
+logger.info(f"Supabase key loaded: {'YES' if key else 'NO'} (length: {len(key) if key else 0})")
 supabase: Client = create_client(url, key)
 
 # Firebase Configuration
@@ -48,9 +50,10 @@ if firebase_creds_path and os.path.exists(firebase_creds_path):
         cred = credentials.Certificate(firebase_creds_path)
         firebase_admin.initialize_app(cred)
         db = firestore.client()
-        print("Firebase initialized successfully.")
+        logger.info("Firebase initialized successfully.")
     except Exception as e:
-        print(f"Firebase initialization failed: {e}")
+        logger.error(f"Firebase initialization failed: {e}")
+        db = None # Ensure db is None if init fails
 
 # Device configuration
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -178,14 +181,69 @@ def sync_user():
     if not user_data or "firebase_uid" not in user_data:
         return jsonify({"error": "Missing user data"}), 400
     
+    firebase_uid = user_data["firebase_uid"]
+    logger.info(f"Syncing user: {firebase_uid}")
+    logger.info(f"Received payload keys: {list(user_data.keys())}")
+    
+    errors = []
+    supabase_ok = False
+    
+    # 1. Sync to Supabase — filter to only known columns
+    VALID_COLUMNS = ["firebase_uid", "email", "name", "profile_pic_url", "bio", "save_history"]
+    filtered_data = {k: v for k, v in user_data.items() if k in VALID_COLUMNS}
+    # Replace None with defaults for NOT NULL columns
+    filtered_data.setdefault("bio", "")
+    filtered_data.setdefault("profile_pic_url", "")
+    if filtered_data.get("bio") is None:
+        filtered_data["bio"] = ""
+    if filtered_data.get("profile_pic_url") is None:
+        filtered_data["profile_pic_url"] = ""
+    logger.info(f"Filtered Supabase payload: {filtered_data}")
+    
     try:
-        # Sync to Supabase
-        supabase.table("users").upsert(user_data, on_conflict="firebase_uid").execute()
-        # Sync to Firebase if available
-        if db: db.collection("users").document(user_data["firebase_uid"]).set(user_data, merge=True)
-        return jsonify({"message": "User synced successfully"}), 200
+        logger.info(f"Attempting Supabase upsert for {firebase_uid}")
+        res = supabase.table("users").upsert(filtered_data, on_conflict="firebase_uid").execute()
+        logger.info(f"Supabase response data: {res.data}")
+        if res.data:
+            supabase_ok = True
+            logger.info(f"Supabase sync successful for {firebase_uid}, rows: {len(res.data)}")
+        else:
+            err_msg = f"Supabase upsert returned empty data for {firebase_uid}"
+            logger.error(err_msg)
+            errors.append(err_msg)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        err_msg = f"Supabase sync failed: {str(e)}"
+        logger.error(err_msg)
+        import traceback
+        logger.error(traceback.format_exc())
+        errors.append(err_msg)
+    
+    # 2. Sync to Firebase Firestore if available (non-blocking)
+    if db:
+        try:
+            logger.info(f"Attempting Firestore sync for {firebase_uid}")
+            db.collection("users").document(firebase_uid).set(user_data, merge=True)
+            logger.info(f"Firestore sync successful for {firebase_uid}")
+        except Exception as e:
+            err_msg = f"Firestore sync failed: {str(e)}"
+            logger.error(err_msg)
+            if "invalid_grant" in str(e).lower() or "signature" in str(e).lower():
+                err_msg = "Firebase Auth Error: Invalid Service Account Credentials (JWT Signature)."
+            errors.append(err_msg)
+    else:
+        logger.warning("Firestore sync skipped: DB client not initialized")
+
+    # If Supabase succeeded, return 200 even if Firestore failed
+    if supabase_ok:
+        return jsonify({
+            "message": "User synced successfully",
+            "warnings": errors if errors else None
+        }), 200
+
+    return jsonify({
+        "message": "User sync failed",
+        "errors": errors
+    }), 500
 
 @app.route('/api/users/<uid>', methods=['GET'])
 def get_user_profile(uid):
@@ -202,8 +260,15 @@ def get_user_profile(uid):
             user_ref = db.collection("users").document(uid).get()
             if user_ref.exists:
                 user_data = user_ref.to_dict()
+                # Ensure NOT NULL columns have defaults
+                user_data.setdefault("bio", "")
+                user_data.setdefault("profile_pic_url", "")
+                if user_data.get("bio") is None:
+                    user_data["bio"] = ""
+                if user_data.get("profile_pic_url") is None:
+                    user_data["profile_pic_url"] = ""
                 # Auto-sync back to Supabase
-                supabase.table("users").upsert(user_data).execute()
+                supabase.table("users").upsert(user_data, on_conflict="firebase_uid").execute()
                 return jsonify(user_data), 200
                 
         return jsonify({"error": "Profile not found"}), 404

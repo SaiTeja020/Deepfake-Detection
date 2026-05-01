@@ -44,16 +44,22 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
             });
 
             // Sync with Supabase & Firestore via Flask Backend
-            await syncUser({
-                firebase_uid: userCredential.user.uid,
-                email: userCredential.user.email || formData.email,
-                name: formData.fullName,
-                profile_pic_url: null,
-                bio: null,
-                save_history: true
-            });
-
-            navigate('/login');
+            try {
+                await syncUser({
+                    firebase_uid: userCredential.user.uid,
+                    email: userCredential.user.email || formData.email,
+                    name: formData.fullName,
+                    profile_pic_url: null,
+                    bio: null,
+                    save_history: true
+                });
+                navigate('/login');
+            } catch (syncErr: any) {
+                console.error("Sync error:", syncErr);
+                const backendError = syncErr.response?.data?.errors?.join(' | ') || syncErr.response?.data?.error || syncErr.message;
+                setError(`Identity created, but sync failed: ${backendError}`);
+                // Don't navigate if sync failed, so user can see the error
+            }
         } catch (err: any) {
             setError(err.message || 'Failed to create identity.');
         } finally {
