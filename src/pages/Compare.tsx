@@ -240,15 +240,15 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
               <h4 className="text-sm font-bold border-b border-blue-500/10 pb-2">Model Insights</h4>
               <div className="grid md:grid-cols-2 gap-6 text-xs leading-relaxed">
                 <div className={`p-4 rounded-xl ${isDark ? 'bg-zinc-950/50' : 'bg-white/50'}`}>
-                  <p className="font-bold text-blue-600 mb-1">ViT Performance</p>
+                  <p className="font-bold text-blue-600 mb-1">ViT Insight</p>
                   <p className={isDark ? 'text-zinc-400' : 'text-slate-600'}>
-                    Excels at capturing global face structure. Better for detecting full-face swaps and holistic structural anomalies.
+                    {vitResult.structured_explanation?.summary || vitResult.explanation?.trim() || 'Excels at capturing global face structure. Better for detecting full-face swaps and holistic structural anomalies.'}
                   </p>
                 </div>
                 <div className={`p-4 rounded-xl ${isDark ? 'bg-zinc-950/50' : 'bg-white/50'}`}>
-                  <p className="font-bold text-blue-600 mb-1">Swin Performance</p>
+                  <p className="font-bold text-blue-600 mb-1">Swin Insight</p>
                   <p className={isDark ? 'text-zinc-400' : 'text-slate-600'}>
-                    Superior for fine-grained texture analysis. Detects micro-jitter in skin pores and refined ocular edge blending issues.
+                    {swinResult.structured_explanation?.summary || swinResult.explanation?.trim() || 'Superior for fine-grained texture analysis. Detects micro-jitter in skin pores and refined ocular edge blending issues.'}
                   </p>
                 </div>
               </div>
