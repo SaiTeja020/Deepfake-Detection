@@ -62,7 +62,7 @@ print(f"Using device: {DEVICE}")
 # Model management
 MODEL_PATHS = {
     "ViT": "SARVM/ViT_Deepfake",
-    "Swin Transformer": "microsoft/swin-tiny-patch4-window7-224",
+    "Swin Transformer": "SARVM/Swin_Transformer",
 }
 model_cache = {"models": {}, "processors": {}, "names": {}}
 deepfake_pipeline = None
@@ -385,13 +385,20 @@ def detect_deepfake():
             outputs_full = m(**inputs_full, output_attentions=True)
             attentions = outputs_full.attentions
             probs_full = torch.softmax(outputs_full.logits, dim=-1).squeeze()
+            
             label2id = getattr(m.config, 'label2id', {})
-            # Ensure index exists
-            fake_idx = label2id.get("FAKE", 0)
-            if isinstance(probs_full, torch.Tensor) and probs_full.dim() > 0:
-                global_fake_prob = float(probs_full[fake_idx].item())
+            num_labels = len(getattr(m.config, 'id2label', {}))
+            
+            if num_labels != 2:
+                logger.error(f"Global Inference: Model has {num_labels} labels instead of 2. Returning 0.5 for global_fake_prob.")
+                global_fake_prob = 0.5
             else:
-                global_fake_prob = float(probs_full.item())
+                # Ensure index exists
+                fake_idx = label2id.get("FAKE", 0)
+                if isinstance(probs_full, torch.Tensor) and probs_full.dim() > 0:
+                    global_fake_prob = float(probs_full[fake_idx].item())
+                else:
+                    global_fake_prob = float(probs_full.item())
 
         mask = None
         outside_fraction = 0.0
@@ -454,15 +461,16 @@ def detect_deepfake():
             except Exception as e: print(f"Visualization error: {e}")
 
         inference_time = round((time.time() - start_time) * 1000)
-        conf_pct = pipeline_result["confidence"]
+        conf_raw = pipeline_result["confidence"]          # [0, 1] fraction from pipeline
+        conf_pct = round(float(conf_raw) * 100, 2)        # convert to percentage for API response
         final_label = pipeline_result["final_label"]
 
         # Build Forensic Evidence Packet
         interpreter = ForensicInterpreter()
         face_interpretations = [interpreter.interpret_face(f, mask, global_fake_prob) for f in face_list]
         evidence_packet = EvidenceBuilder.build(
-            verdict=final_label, # Preserve nuance (Deepfake/Suspicious/Uncertain)
-            confidence=conf_pct,
+            verdict=final_label,               # Preserve nuance (Deepfake/Suspicious/Uncertain)
+            confidence=conf_raw,               # Pass raw [0,1] fraction — EvidenceBuilder expects a fraction
             faces=face_interpretations,
             attention_outside_faces=outside_fraction,
             model_type=model_type_used,

@@ -224,6 +224,13 @@ class DeepfakePipeline:
                 probs = torch.softmax(logits, dim=1).squeeze(0)
                 
             label2id = getattr(self.model.config, 'label2id', {})
+            num_labels = len(getattr(self.model.config, 'id2label', {}))
+            
+            # SAFEGUARD: Ensure model is actually fine-tuned for binary classification
+            if num_labels != 2:
+                logger.error(f"Model has {num_labels} labels! Expected 2 for deepfake detection. Returning uncertain fallback.")
+                return {"fake_prob": 0.5, "real_prob": 0.5}
+
             fake_idx = label2id.get("FAKE", 0)
             real_idx = label2id.get("REAL", 1)
             
