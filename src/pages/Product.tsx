@@ -15,6 +15,7 @@ import {
 import { auth } from '../firebase';
 import { saveScanHistory, uploadScanMedia } from '../services/api';
 import { useAuth } from '../context/AuthContext';
+import { HoverCard, HoverCardTrigger, HoverCardContent } from '../components/ui/hover-card';
 
 // ---------------------------------------------------------------------------
 // Per-face breakdown panel
@@ -116,7 +117,6 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const [error, setError] = useState<string | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [isRemoving, setIsRemoving] = useState(false);
-  const [zoomedImage, setZoomedImage] = useState<{ url: string; model: string } | null>(null);
 
   const { profile } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -248,23 +248,37 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
             >
               {image ? (
                 <div className="relative w-full h-full">
-                  <div 
-                    onClick={() => showHeatmap && result && setZoomedImage({ url: result.attentionMapUrl, model: selectedModel })}
-                    className={`relative w-full h-full ${showHeatmap && result ? 'cursor-zoom-in group/zoomer' : ''}`}
-                  >
-                    <img
-                      src={showHeatmap && result ? result.attentionMapUrl : image}
-                      className={`w-full h-full object-cover transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
-                      alt="Face Preview"
-                    />
-                    {showHeatmap && result && (
-                      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/zoomer:opacity-100 transition-opacity bg-black/20">
-                        <div className="p-4 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
-                          <EyeIcon className="w-8 h-8" />
-                        </div>
+                  <HoverCard openDelay={200} closeDelay={200}>
+                    <HoverCardTrigger asChild>
+                      <div 
+                        className={`relative w-full h-full ${showHeatmap && result ? 'cursor-zoom-in group/zoomer' : ''}`}
+                      >
+                        <img
+                          src={showHeatmap && result ? result.attentionMapUrl : image}
+                          className={`w-full h-full object-cover transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
+                          alt="Face Preview"
+                        />
+                        {showHeatmap && result && (
+                          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/zoomer:opacity-100 transition-opacity bg-black/20">
+                            <div className="p-4 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white shadow-xl">
+                              <EyeIcon className="w-8 h-8" />
+                            </div>
+                          </div>
+                        )}
                       </div>
+                    </HoverCardTrigger>
+                    {showHeatmap && result && (
+                      <HoverCardContent side="right" align="center" sideOffset={24} className="w-[500px] p-0 overflow-hidden bg-black border-zinc-800">
+                        <div className="relative rounded-xl overflow-hidden">
+                          <img src={result.attentionMapUrl} className="w-full aspect-square object-cover" alt="Magnified Heatmap" />
+                          <div className="absolute inset-x-0 bottom-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
+                            <h3 className="text-xl font-bold text-white heading-font">{selectedModel} Forensic Map</h3>
+                            <p className="text-zinc-400 text-sm mt-1">Full-resolution neural attention analysis.</p>
+                          </div>
+                        </div>
+                      </HoverCardContent>
                     )}
-                  </div>
+                  </HoverCard>
 
                   {/* Close Icon */}
                   <button
@@ -534,45 +548,6 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         </div>
       )}
 
-      {/* Pop-up Heatmap Viewer */}
-      <AnimatePresence>
-        {zoomedImage && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-12">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setZoomedImage(null)}
-              className="absolute inset-0 bg-zinc-950/90 backdrop-blur-sm"
-            />
-            
-            <motion.div
-              initial={{ scale: 0.85, opacity: 0, y: 10 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.85, opacity: 0, y: 10 }}
-              className={`relative w-full max-w-5xl aspect-video rounded-[2rem] overflow-hidden border shadow-2xl ${isDark ? 'bg-black border-white/10' : 'bg-white border-slate-200'}`}
-            >
-              <img src={zoomedImage.url} className="w-full h-full object-cover" alt="Magnified Heatmap" />
-              
-              {/* Overlay Content */}
-              <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xl font-bold text-white heading-font">{zoomedImage.model} Forensic Map</h3>
-                    <p className="text-zinc-400 text-sm">Full-resolution neural attention analysis.</p>
-                  </div>
-                  <button 
-                    onClick={() => setZoomedImage(null)}
-                    className="w-12 h-12 rounded-full bg-white/10 border border-white/10 flex items-center justify-center text-white hover:bg-white/20 transition-all"
-                  >
-                    <XMarkIcon className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
   );
 };
