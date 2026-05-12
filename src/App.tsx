@@ -18,6 +18,7 @@ import {
   SunIcon,
   MoonIcon
 } from '@heroicons/react/24/outline';
+import OfflinePage from "./pages/OfflinePage";
 
 const routeLoaders = {
   product: () => import('./pages/Product'),
@@ -189,16 +190,22 @@ const App: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [isMobileOpen, setMobileOpen] = useState(false);
+
   const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
   const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
+
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
   const { user, profile, loading } = useAuth();
 
+  // Theme effect
   useEffect(() => {
     const root = document.documentElement;
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
     const applyTheme = (mode: 'dark' | 'light' | 'system') => {
       let resolvedTheme: 'dark' | 'light' = 'dark';
+
       if (mode === 'system') {
         resolvedTheme = mediaQuery.matches ? 'dark' : 'light';
       } else {
@@ -211,21 +218,36 @@ const App: React.FC = () => {
 
     applyTheme(themeMode);
 
-    const listener = (e: MediaQueryListEvent) => {
+    const listener = () => {
       if (themeMode === 'system') {
         applyTheme('system');
       }
     };
 
     mediaQuery.addEventListener('change', listener);
+
     return () => mediaQuery.removeEventListener('change', listener);
   }, [themeMode]);
+
+  // Internet status effect
+  useEffect(() => {
+    const handleOffline = () => setIsOffline(true);
+    const handleOnline = () => setIsOffline(false);
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
 
   const toggleTheme = () => {
     setThemeMode(prev => {
       if (prev === 'dark') return 'light';
       if (prev === 'light') return 'system';
-      return 'dark'; // system -> dark
+      return 'dark';
     });
   };
 
@@ -251,10 +273,17 @@ const App: React.FC = () => {
       <div className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${activeTheme === 'dark' ? 'bg-[#09090b]' : 'bg-[#fafafa]'}`}>
         <div className="flex flex-col items-center space-y-4">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className={`text-sm font-medium tracking-widest uppercase opacity-50 ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Initializing Terminal</p>
+          <p className={`text-sm font-medium tracking-widest uppercase opacity-50 ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+            Initializing Terminal
+          </p>
         </div>
       </div>
     );
+  }
+
+  // Offline screen
+  if (isOffline) {
+    return <OfflinePage theme={activeTheme} />;
   }
 
   const sidebarCollapsed = isCollapsed && !isHovered;

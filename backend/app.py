@@ -364,6 +364,18 @@ def detect_deepfake():
         img_data = base64.b64decode(image_content)
         image = Image.open(io.BytesIO(img_data)).convert("RGB")
         
+        # FIX: Pad image to square to prevent center-cropping by the processor
+        def pad_to_square(img: Image.Image, color=(0, 0, 0)) -> Image.Image:
+            width, height = img.size
+            if width == height:
+                return img
+            sq_size = max(width, height)
+            new_img = Image.new("RGB", (sq_size, sq_size), color)
+            new_img.paste(img, ((sq_size - width) // 2, (sq_size - height) // 2))
+            return new_img
+            
+        image = pad_to_square(image)
+        
         start_time = time.time()
         
         # heatmap first (to get outside_fraction)

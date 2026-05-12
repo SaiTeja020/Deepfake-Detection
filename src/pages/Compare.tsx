@@ -109,7 +109,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
             <motion.img 
               layoutId={`heatmap-img-${modelName}`}
               src={result.attentionMapUrl} 
-              className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" 
+              className="w-full h-full object-contain grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" 
               alt={`${modelName} Heatmap`} 
             />
             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/heatmap:opacity-100 transition-opacity bg-black/20">
@@ -165,7 +165,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
             >
               {image ? (
                 <div className="relative w-full h-full">
-                  <img src={image} className="w-full h-full object-cover transition-all" alt="Face Source" />
+                  <img src={image} className="w-full h-full object-contain transition-all" alt="Face Source" />
 
                   {/* Close Icon */}
                   <button

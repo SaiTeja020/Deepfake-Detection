@@ -254,7 +254,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   >
                     <img
                       src={showHeatmap && result ? result.attentionMapUrl : image}
-                      className={`w-full h-full object-cover transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
+                      className={`w-full h-full object-contain transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
                       alt="Face Preview"
                     />
                     {showHeatmap && result && (
@@ -552,7 +552,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
               exit={{ scale: 0.85, opacity: 0, y: 10 }}
               className={`relative w-full max-w-5xl aspect-video rounded-[2rem] overflow-hidden border shadow-2xl ${isDark ? 'bg-black border-white/10' : 'bg-white border-slate-200'}`}
             >
-              <img src={zoomedImage.url} className="w-full h-full object-cover" alt="Magnified Heatmap" />
+              <img src={zoomedImage.url} className="w-full h-full object-contain" alt="Magnified Heatmap" />
               
               {/* Overlay Content */}
               <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
