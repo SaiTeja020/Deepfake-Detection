@@ -24,6 +24,21 @@ from pipeline import DeepfakePipeline
 from forensic_interpreter import ForensicInterpreter
 from evidence_builder import EvidenceBuilder
 
+# ---------------------------------------------------------------------------
+# Frequency Branch — single source of truth import
+# model/freq_branch.py is the canonical location; no file is copied here.
+# ---------------------------------------------------------------------------
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'model')))
+try:
+    from freq_branch import FrequencyBranch, FusionClassifier
+    _FREQ_BRANCH_AVAILABLE = True
+except ImportError as _e:
+    logger_bootstrap = logging.getLogger(__name__)
+    logger_bootstrap.warning("freq_branch.py not found — fused inference disabled: %s", _e)
+    _FREQ_BRANCH_AVAILABLE = False
+
 load_dotenv()
 
 from llm_adapter import provider_router, structured_to_legacy
@@ -64,7 +79,7 @@ MODEL_PATHS = {
     "ViT": "SARVM/ViT_Deepfake",
     "Swin Transformer": "SARVM/Swin_Transformer",
 }
-model_cache = {"models": {}, "processors": {}, "names": {}}
+model_cache = {"models": {}, "processors": {}, "names": {}, "freq_branches": {}, "fusion_heads": {}}
 deepfake_pipeline = None
 
 def get_model(model_type="ViT"):
@@ -119,18 +134,77 @@ def get_model(model_type="ViT"):
             model.to(DEVICE)
             model.eval()
             
-            # Cache them
+            # Cache spatial model
             model_cache["models"][model_type] = model
             model_cache["processors"][model_type] = processor
             model_cache["names"][model_type] = actual_model_name
-            
+
+            # ------------------------------------------------------------------
+            # Load Frequency Branch + FusionClassifier (graceful fallback)
+            #
+            # Each model's HF repo contains its own fused checkpoint:
+            #   SARVM/Swin_Transformer → swin_fused_final.pth
+            #   SARVM/Refined_ViT     → vit_freq_fusion_best.pth
+            #
+            # SARVM/Frequency_Branch holds ONLY the raw FrequencyBranch CNN
+            # weights (freq_branch_standalone.pth) — it is never used here.
+            # ------------------------------------------------------------------
+            if _FREQ_BRANCH_AVAILABLE:
+                try:
+                    # Resolve the correct repo + filename per backbone
+                    if "Swin" in model_type:
+                        fusion_repo     = "SARVM/Swin_Transformer"
+                        fusion_filename = "swin_fused_final.pth"
+                    else:
+                        fusion_repo     = "SARVM/Refined_ViT"
+                        fusion_filename = "vit_freq_fusion_best.pth"
+
+                    fusion_weights_path = hf_hub_download(
+                        repo_id=fusion_repo,
+                        filename=fusion_filename,
+                        token=hf_token,
+                    )
+                    checkpoint = torch.load(fusion_weights_path, map_location=DEVICE)
+
+                    # FrequencyBranch — embed_dim is always 768
+                    freq_branch = FrequencyBranch(embed_dim=768).to(DEVICE)
+                    freq_branch.load_state_dict(checkpoint['freq_branch_state_dict'])
+                    freq_branch.eval()
+                    for param in freq_branch.parameters():
+                        param.requires_grad = False
+
+                    # FusionClassifier — spatial_dim differs per backbone
+                    spatial_dim = 1024 if "Swin" in model_type else 768
+                    fusion_head = FusionClassifier(spatial_dim=spatial_dim, freq_dim=768).to(DEVICE)
+                    fusion_head.load_state_dict(checkpoint['fusion_head_state_dict'])
+                    fusion_head.eval()
+
+                    model_cache["freq_branches"][model_type] = freq_branch
+                    model_cache["fusion_heads"][model_type] = fusion_head
+                    print(f"Fusion weights loaded for {model_type} from {fusion_repo} (spatial_dim={spatial_dim}).")
+                except Exception as fe:
+                    print(f"Warning: Fusion weights unavailable for {model_type} — spatial-only mode: {fe}")
+                    model_cache["freq_branches"][model_type] = None
+                    model_cache["fusion_heads"][model_type] = None
+            else:
+                model_cache["freq_branches"][model_type] = None
+                model_cache["fusion_heads"][model_type] = None
+
+
             print(f"{model_type} initialized successfully ({actual_model_name}).")
         except Exception as e:
             print(f"CRITICAL: Failed to load {model_type} model: {e}")
             traceback.print_exc()
-            return None, None, None, None
-            
-    return model_cache["models"][model_type], model_cache["processors"][model_type], None, model_cache["names"][model_type]
+            return None, None, None, None, None, None
+
+    return (
+        model_cache["models"][model_type],
+        model_cache["processors"][model_type],
+        None,
+        model_cache["names"][model_type],
+        model_cache["freq_branches"].get(model_type),
+        model_cache["fusion_heads"].get(model_type),
+    )
 
 def compute_vit_rollout(attentions):
     """Attention rollout for ViT models"""
@@ -348,12 +422,16 @@ def detect_deepfake():
     model_type_used = data.get('model_type', 'ViT')
     
     try:
-        m, p, t, loaded_name = get_model(model_type_used)
+        m, p, t, loaded_name, freq_branch, fusion_head = get_model(model_type_used)
         if m is None: return jsonify({"error": "Model load failed"}), 503
-        
+
         # Initialize pipeline singleton or update if model changed
         if deepfake_pipeline is None or deepfake_pipeline.model is not m:
-            deepfake_pipeline = DeepfakePipeline(m, p, DEVICE)
+            deepfake_pipeline = DeepfakePipeline(
+                m, p, DEVICE,
+                freq_branch=freq_branch,
+                fusion_head=fusion_head,
+            )
 
         # Process image
         if base64_image.startswith('data:image'):

@@ -64,12 +64,24 @@ class DeepfakePipeline:
 
     Must be initialised once (at server startup) with the loaded ViT model.
     MTCNN and FaceMesh are initialised lazily on first use and reused across calls.
+
+    Optional freq_branch + fusion_head enable the fused inference path:
+        predict_model() automatically selects between:
+          - _predict_fused()        (when both are provided)
+          - _predict_spatial_only() (legacy fallback when either is None)
     """
 
-    def __init__(self, model, processor, device):
+    def __init__(self, model, processor, device, freq_branch=None, fusion_head=None):
         self.model = model
         self.processor = processor
         self.device = device
+        self.freq_branch = freq_branch
+        self.fusion_head = fusion_head
+
+        # Pre-compute label indices once from model config
+        label2id = getattr(model.config, 'label2id', {})
+        self.fake_idx = label2id.get("FAKE", 0)
+        self.real_idx = label2id.get("REAL", 1)
 
         self._mtcnn = None       # lazy: facenet_pytorch.MTCNN
         self._face_mesh = None   # lazy: mediapipe FaceMesh
@@ -206,41 +218,101 @@ class DeepfakePipeline:
 
     def predict_model(self, face_crop: Image.Image) -> Dict[str, float]:
         """
-        Run the ViT model on a single face crop.
-        Returns explicit probabilities for REAL and FAKE instead of argmax confidence.
+        Dispatch to fused or spatial-only inference based on whether a
+        FrequencyBranch + FusionClassifier have been loaded.
+
+        Returns explicit probabilities: {"fake_prob": float, "real_prob": float}
+        """
+        if self.freq_branch is not None and self.fusion_head is not None:
+            return self._predict_fused(face_crop)
+        return self._predict_spatial_only(face_crop)
+
+    def _predict_spatial_only(self, face_crop: Image.Image) -> Dict[str, float]:
+        """
+        Legacy inference path — spatial backbone (ViT/Swin) only.
+        Used when no FrequencyBranch has been loaded, preserving full
+        backward compatibility with the existing pipeline.
         """
         try:
             if self.processor is None:
                 raise ValueError("DeepfakePipeline: processor is None")
-            
+
             proc_out = self.processor(images=face_crop, return_tensors="pt")
             if proc_out is None:
                 raise ValueError("DeepfakePipeline: processor returned None")
-                
+
             inputs = proc_out.to(self.device)
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 logits = outputs.logits
                 probs = torch.softmax(logits, dim=1).squeeze(0)
-                
-            label2id = getattr(self.model.config, 'label2id', {})
+
             num_labels = len(getattr(self.model.config, 'id2label', {}))
-            
-            # SAFEGUARD: Ensure model is actually fine-tuned for binary classification
+
+            # SAFEGUARD: Ensure model is fine-tuned for binary classification
             if num_labels != 2:
-                logger.error(f"Model has {num_labels} labels! Expected 2 for deepfake detection. Returning uncertain fallback.")
+                logger.error(
+                    f"Model has {num_labels} labels! Expected 2. Returning uncertain fallback."
+                )
                 return {"fake_prob": 0.5, "real_prob": 0.5}
 
-            fake_idx = label2id.get("FAKE", 0)
-            real_idx = label2id.get("REAL", 1)
-            
-            fake_prob = float(probs[fake_idx].item())
-            real_prob = float(probs[real_idx].item())
-            
+            fake_prob = float(probs[self.fake_idx].item())
+            real_prob = float(probs[self.real_idx].item())
             return {"fake_prob": fake_prob, "real_prob": real_prob}
         except Exception as e:
             logger.warning("Model inference failed on face crop: %s", e)
             return {"fake_prob": 0.0, "real_prob": 1.0}
+
+    def _predict_fused(self, face_crop: Image.Image) -> Dict[str, float]:
+        """
+        Fused inference path: spatial backbone + frozen FrequencyBranch → FusionClassifier.
+
+        Feature extraction is backbone-agnostic:
+          - Swin: self.model.swin(...).pooler_output     → [1, 1024]
+          - ViT:  self.model.vit(...).last_hidden_state[:, 0, :] → [1, 768]
+
+        Falls back to _predict_spatial_only() on any exception so the
+        pipeline never hard-crashes in production.
+        """
+        try:
+            if self.processor is None:
+                raise ValueError("DeepfakePipeline: processor is None")
+
+            proc_out = self.processor(images=face_crop, return_tensors="pt")
+            if proc_out is None:
+                raise ValueError("DeepfakePipeline: processor returned None")
+
+            img_tensor = proc_out["pixel_values"].to(self.device)
+
+            with torch.no_grad():
+                # 1. Spatial features — handle ViT vs Swin dynamically
+                if hasattr(self.model, 'swin'):
+                    spatial_out = self.model.swin(pixel_values=img_tensor)
+                    spatial_features = spatial_out.pooler_output              # [1, 1024]
+                elif hasattr(self.model, 'vit'):
+                    spatial_out = self.model.vit(pixel_values=img_tensor)
+                    # ViT: CLS token from the final hidden state
+                    spatial_features = spatial_out.last_hidden_state[:, 0, :]  # [1, 768]
+                else:
+                    raise ValueError(
+                        f"Unsupported model type for fusion: {type(self.model).__name__}"
+                    )
+
+                # 2. Frequency features from the frozen FrequencyBranch
+                freq_features = self.freq_branch(img_tensor)                  # [1, 768]
+
+                # 3. Concatenate and classify
+                logits = self.fusion_head(spatial_features, freq_features)
+                probs = torch.softmax(logits, dim=1).squeeze(0)
+
+            fake_prob = float(probs[self.fake_idx].item())
+            real_prob = float(probs[self.real_idx].item())
+            return {"fake_prob": fake_prob, "real_prob": real_prob}
+        except Exception as e:
+            logger.warning(
+                "Fused inference failed: %s — falling back to spatial-only.", e
+            )
+            return self._predict_spatial_only(face_crop)
 
     # ------------------------------------------------------------------ #
     # Component 4 – Landmark Extraction  (MTCNN 5-point keypoints)         #
