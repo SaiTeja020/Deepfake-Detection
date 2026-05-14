@@ -472,3 +472,47 @@ body {
     grid-auto-rows: auto;
   }
 }
+
+/* Hover Card */
+.hover-card-content {
+  background: var(--surface-light);
+  border: 1px solid var(--border-light);
+  color: var(--text-light);
+  overflow: hidden;
+}
+
+[data-theme='dark'] .hover-card-content {
+  background: var(--surface-dark);
+  border-color: var(--border-dark);
+  color: var(--text-dark);
+}
+
+.hover-card-content[data-state='open'] {
+  animation: hoverCardFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.hover-card-content[data-state='closed'] {
+  animation: hoverCardFadeOut 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes hoverCardFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes hoverCardFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
