@@ -174,30 +174,36 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
     setIsDetecting(true);
     try {
+      // Step 1: Run detection — this is the critical path. Show result immediately.
       const detectionResult = await detectDeepfake(auth.currentUser?.uid || 'guest', image, selectedModel);
       setResult(detectionResult);
 
-      // Upload media to Supabase Storage before saving history ONLY if save_history is enabled
+      // Step 2: Save history — non-fatal. Supabase being down must NOT hide the result.
       if (auth.currentUser && profile?.save_history !== false) {
-        const uploadRes = await uploadScanMedia(
-          auth.currentUser.uid,
-          image,
-          detectionResult.attentionMapUrl
-        );
+        try {
+          const uploadRes = await uploadScanMedia(
+            auth.currentUser.uid,
+            image,
+            detectionResult.attentionMapUrl ?? undefined
+          );
 
-        // Save to Supabase via Flask Backend
-        await saveScanHistory({
-          firebase_uid: auth.currentUser.uid,
-          file_name: fileInfo.name,
-          original_media_url: uploadRes.original_url || image,
-          heatmap_url: uploadRes.heatmap_url || detectionResult.attentionMapUrl,
-          result: detectionResult.prediction,
-          confidence: detectionResult.confidence,
-          model_used: selectedModel,
-          explanation: detectionResult.explanation || `Analysis using ${selectedModel} protocol.`
-        });
+          await saveScanHistory({
+            firebase_uid: auth.currentUser.uid,
+            file_name: fileInfo.name,
+            original_media_url: uploadRes.original_url || image,
+            heatmap_url: uploadRes.heatmap_url || detectionResult.attentionMapUrl || '',
+            result: detectionResult.prediction,
+            confidence: detectionResult.confidence,
+            model_used: selectedModel,
+            explanation: detectionResult.explanation || `Analysis using ${selectedModel} protocol.`
+          });
+        } catch (saveErr) {
+          // History save failed (e.g. Supabase offline) — silently log, never surface to user
+          console.warn('History save failed (non-fatal):', saveErr);
+        }
       }
     } catch (err) {
+      // Detection itself failed
       console.error(err);
       setError("Model analysis failed. Please try again.");
     } finally {
@@ -251,14 +257,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   <HoverCard openDelay={200} closeDelay={200}>
                     <HoverCardTrigger asChild>
                       <div 
-                        className={`relative w-full h-full ${showHeatmap && result ? 'cursor-zoom-in group/zoomer' : ''}`}
+                        className={`relative w-full h-full ${showHeatmap && result?.attentionMapUrl ? 'cursor-zoom-in group/zoomer' : ''}`}
                       >
                         <img
-                          src={showHeatmap && result ? result.attentionMapUrl : image}
+                          src={showHeatmap && result?.attentionMapUrl ? result.attentionMapUrl : image}
                           className={`w-full h-full object-cover transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
                           alt="Face Preview"
                         />
-                        {showHeatmap && result && (
+                        {showHeatmap && result?.attentionMapUrl && (
                           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/zoomer:opacity-100 transition-opacity bg-black/20">
                             <div className="p-4 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white shadow-xl">
                               <EyeIcon className="w-8 h-8" />
@@ -267,7 +273,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                         )}
                       </div>
                     </HoverCardTrigger>
-                    {showHeatmap && result && (
+                    {showHeatmap && result?.attentionMapUrl && (
                       <HoverCardContent side="right" align="center" sideOffset={24} className="w-[500px] p-0 overflow-hidden bg-black border-zinc-800">
                         <div className="relative rounded-xl overflow-hidden">
                           <img src={result.attentionMapUrl} className="w-full aspect-square object-cover" alt="Magnified Heatmap" />
@@ -300,7 +306,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                     </div>
                   )}
 
-                  {result && (
+                  {result?.attentionMapUrl && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setShowHeatmap(!showHeatmap); }}
                       className="absolute bottom-4 right-4 px-4 py-2 bg-zinc-950/80 backdrop-blur-md border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-white hover:bg-zinc-900 transition-all ml-auto flex items-center space-x-2"

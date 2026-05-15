@@ -103,35 +103,40 @@ def get_model(model_type="ViT"):
                 print(f"Warning: Image processor not found for {model_name} ({pe}). Falling back to standard Swin processor.")
                 processor = AutoImageProcessor.from_pretrained("microsoft/swin-tiny-patch4-window7-224")
             
-            # Load model with forced standard loading to avoid meta-tensor issues
+            # Load model — avoid meta-tensor crash by using device_map instead of .to()
+            # device_map loads weights directly to the target device; no .to() needed.
             try:
                 model = AutoModelForImageClassification.from_pretrained(
-                    model_name, 
+                    model_name,
                     token=hf_token,
-                    output_attentions=True,
-                    low_cpu_mem_usage=False,
-                    ignore_mismatched_sizes=True
+                    ignore_mismatched_sizes=True,
+                    device_map=str(DEVICE),   # loads directly to CPU or CUDA
                 )
             except Exception as me:
-                print(f"Warning: AutoModel failed for {model_name} ({me}). Trying specific class fallback.")
+                print(f"Warning: AutoModel+device_map failed ({me}). Trying specific class with CPU load.")
+                # Fallback: load to CPU explicitly then stay on CPU
                 if model_type == "Swin Transformer":
                     from transformers import SwinForImageClassification as model_class
                 else:
                     from transformers import ViTForImageClassification as model_class
-                
+
                 model = model_class.from_pretrained(
-                    model_name, 
-                    token=hf_token, 
-                    output_attentions=True,
-                    low_cpu_mem_usage=False
+                    model_name,
+                    token=hf_token,
+                    low_cpu_mem_usage=False,   # keep weights materialised
+                    ignore_mismatched_sizes=True,
                 )
-            
-            # Label Correction - Set BEFORE moving to device
+                # Only call .to() if the model is NOT on a meta device
+                if not any(p.is_meta for p in model.parameters()):
+                    model.to(DEVICE)
+
+            # Label Correction
             if hasattr(model.config, 'num_labels') and model.config.num_labels == 2:
                 model.config.id2label = {0: "FAKE", 1: "REAL"}
                 model.config.label2id = {"FAKE": 0, "REAL": 1}
-            
-            model.to(DEVICE)
+
+            # Ensure attention weights are returned at inference time
+            model.config.output_attentions = True
             model.eval()
             
             # Cache spatial model
@@ -207,12 +212,25 @@ def get_model(model_type="ViT"):
     )
 
 def compute_vit_rollout(attentions):
-    """Attention rollout for ViT models"""
-    att_mat = torch.stack(attentions).squeeze(1)
-    att_mat = att_mat.mean(dim=1)
-    residual_att = torch.eye(att_mat.size(-1)).to(att_mat.device)
+    """Attention rollout for ViT models.
+
+    Each element of `attentions` has shape [B, heads, tokens, tokens].
+    We stack → [L, B, heads, T, T], then squeeze the batch dim (index 1,
+    only valid when B=1) and average over heads → [L, T, T].
+    """
+    # Stack: [L, B, heads, T, T]
+    att_mat = torch.stack(attentions)  
+    # Remove batch dim (B=1): [L, heads, T, T]
+    att_mat = att_mat.squeeze(1)       
+    # Average over heads: [L, T, T]
+    att_mat = att_mat.mean(dim=1)      
+
+    # Add residual identity and re-normalise (standard rollout)
+    residual_att = torch.eye(att_mat.size(-1), device=att_mat.device)
     aug_att_mat = att_mat + residual_att
-    aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1).unsqueeze(-1)
+    aug_att_mat = aug_att_mat / aug_att_mat.sum(dim=-1, keepdim=True)
+
+    # Propagate attention through layers
     joint_attentions = torch.zeros_like(aug_att_mat)
     joint_attentions[0] = aug_att_mat[0]
     for n in range(1, aug_att_mat.size(0)):
@@ -220,14 +238,46 @@ def compute_vit_rollout(attentions):
     return joint_attentions[-1]
 
 def compute_swin_heatmap(attentions):
-    """Simplified heatmap for Swin Transformer"""
+    """Aggregate Swin Transformer attentions into a spatial importance map.
+
+    Swin attentions have shape [B, heads, N_windows, win_h*win_w, win_h*win_w]
+    (or [B, heads, seq_len, seq_len] for shifted-window layers).
+    We cannot do a spatial reshape directly from per-window attention because
+    the token ordering is window-local, not global.  Instead we take the
+    row-sum of each attention matrix as a per-token importance score and
+    average across all stages and heads, then reshape into the closest square
+    spatial grid — which gives a coarse but valid global saliency map.
+    """
     try:
-        last_stage_att = attentions[-1].detach().cpu()
-        att_map = last_stage_att.mean(dim=1).squeeze(0)
-        importance = att_map.sum(dim=0)
-        s = int(np.sqrt(importance.size(0)))
-        return importance.view(s, s).numpy()
-    except Exception:
+        importance_maps = []
+        for stage_att in attentions:
+            # stage_att: [B, heads, T, T]  (T = seq_len for that stage)
+            att = stage_att.detach().cpu().float()          # [B, H, T, T]
+            # Row-sum → per-token importance: [B, H, T]
+            token_imp = att.sum(dim=-1)                     
+            # Average over heads: [B, T]
+            token_imp = token_imp.mean(dim=1).squeeze(0)   # [T]
+            s = int(np.sqrt(token_imp.size(0)))
+            if s * s != token_imp.size(0):
+                # Sequence length isn't a perfect square (e.g. shifted windows);
+                # truncate to nearest square so reshape succeeds.
+                token_imp = token_imp[: s * s]
+            importance_maps.append(token_imp.view(s, s).numpy())
+
+        if not importance_maps:
+            return None
+
+        # Upsample all stages to the largest spatial resolution and average
+        target_h, target_w = importance_maps[-1].shape  # last stage is largest for Swin
+        combined = np.zeros((target_h, target_w), dtype=np.float32)
+        for imp in importance_maps:
+            resized = cv2.resize(imp.astype(np.float32), (target_w, target_h),
+                                 interpolation=cv2.INTER_LINEAR)
+            combined += resized
+        combined /= len(importance_maps)
+        return combined
+    except Exception as exc:
+        logger.warning("compute_swin_heatmap failed: %s", exc)
         return None
 
 def upload_to_supabase(image_data: str, bucket: str, folder: str = "") -> tuple[str | None, str | None]:
@@ -378,7 +428,14 @@ def save_scan():
         res = supabase.table("scan_history").insert(data).execute()
         return jsonify(res.data), 201
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        err_str = str(e)
+        # DNS / network failure: Supabase project is likely paused or offline.
+        # Return 200 with a warning so the frontend save never surfaces as a fatal error.
+        if "Name or service not known" in err_str or "gaierror" in err_str or "ConnectionError" in err_str:
+            logger.warning("save_scan: Supabase unreachable — scan not persisted. %s", err_str)
+            return jsonify({"warning": "History save skipped — storage offline"}), 200
+        logger.error("save_scan failed: %s", err_str)
+        return jsonify({"error": err_str}), 500
 
 @app.route('/api/upload/scan', methods=['POST'])
 def upload_scan_media():
@@ -395,7 +452,10 @@ def upload_scan_media():
         if original_base64:
             url, err = upload_to_supabase(original_base64, "user-uploads", folder=uid)
             if url: res["original_url"] = url
-            elif err: logger.error(f"Original upload failed: {err}")
+            elif err:
+                logger.error(f"Original upload failed: {err}")
+                if "Name or service not known" in str(err):
+                    return jsonify({"warning": "Storage offline"}), 200
             
         if heatmap_base64:
             # If it's already a URL (from detection result), just pass it back
@@ -408,7 +468,11 @@ def upload_scan_media():
                 
         return jsonify(res), 200
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        err_str = str(e)
+        if "Name or service not known" in err_str:
+            logger.warning("upload_scan_media: Supabase unreachable — upload skipped.")
+            return jsonify({"warning": "Storage offline"}), 200
+        return jsonify({"error": err_str}), 500
 
 @app.route('/api/detect', methods=['POST'])
 def detect_deepfake():
@@ -480,20 +544,29 @@ def detect_deepfake():
 
         mask = None
         outside_fraction = 0.0
-        if attentions:
+        if attentions is None:
+            logger.warning("Model returned no attention weights — heatmap unavailable. "
+                           "Check that output_attentions=True is set in model config.")
+        else:
             try:
                 if "Swin" in str(type(m)):
                     mask = compute_swin_heatmap(attentions)
                 else:
                     rollout = compute_vit_rollout(attentions)
+                    # rollout[0] = attention from CLS token; skip CLS itself (token 0)
                     mask_raw = rollout[0, 1:]
                     s = int(np.sqrt(mask_raw.size(0)))
                     mask = mask_raw.reshape(s, s).cpu().numpy()
-                
+
                 if mask is not None:
+                    # Normalize to [0, 1]
                     mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
-                    mask = cv2.resize(mask, image.size)
-            except Exception as e: print(f"Heatmap error: {e}")
+                    # Resize to original image dimensions: cv2.resize expects (W, H)
+                    img_w, img_h = image.size
+                    mask = cv2.resize(mask.astype(np.float32), (img_w, img_h),
+                                      interpolation=cv2.INTER_LINEAR)
+            except Exception as e:
+                logger.warning("Heatmap generation error: %s", e, exc_info=True)
 
         # Run pipeline with attention awareness
         try:
@@ -580,7 +653,7 @@ def detect_deepfake():
             "prediction": str(final_label),
             "confidence": float(conf_pct),
             "inferenceTime": int(inference_time),
-            "attentionMapUrl": heatmap_url or "https://picsum.photos/seed/heatmap/400/400",
+            "attentionMapUrl": heatmap_url,  # None when heatmap generation failed
             "facemeshUrl": facemesh_url,
             "explanation": str(legacy["explanation"]),
             "suspicious_domains": legacy["suspicious_domains"],

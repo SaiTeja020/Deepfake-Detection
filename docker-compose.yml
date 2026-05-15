@@ -19,6 +19,7 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
+      - ./model:/model:ro
       - ./foresight-2b6ca-9c19b754a2a2.json:/app/firebase-service-account.json:ro
       - backend_venv:/app/.venv
       - uv_cache:/root/.cache/uv

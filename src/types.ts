@@ -28,10 +28,11 @@ export interface FaceResult {
 }
 
 export interface DetectionResult {
-  prediction: 'Real' | 'Fake' | 'Suspicious';
+  prediction: 'Real' | 'Fake' | 'Suspicious' | 'Deepfake' | 'Uncertain' | 'NoFaces';
   confidence: number;
   inferenceTime: number;
-  attentionMapUrl: string;
+  attentionMapUrl: string | null;  // null when heatmap generation failed or Supabase offline
+  facemeshUrl?: string | null;
   explanation?: string;
   suspicious_domains?: string[];
   model_consensus?: string;
@@ -42,6 +43,7 @@ export interface DetectionResult {
   faces?: FaceResult[];
   face_count?: number;
   no_faces_detected?: boolean;
+  model_name?: string;
 }
 
 
