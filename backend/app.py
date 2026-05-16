@@ -111,6 +111,7 @@ def get_model(model_type="ViT"):
                     token=hf_token,
                     ignore_mismatched_sizes=True,
                     device_map=str(DEVICE),   # loads directly to CPU or CUDA
+                    attn_implementation="eager",  # required for output_attentions=True (heatmaps)
                 )
             except Exception as me:
                 print(f"Warning: AutoModel+device_map failed ({me}). Trying specific class with CPU load.")
@@ -125,6 +126,7 @@ def get_model(model_type="ViT"):
                     token=hf_token,
                     low_cpu_mem_usage=False,   # keep weights materialised
                     ignore_mismatched_sizes=True,
+                    attn_implementation="eager",  # required for output_attentions=True (heatmaps)
                 )
                 # Only call .to() if the model is NOT on a meta device
                 if not any(p.is_meta for p in model.parameters()):
@@ -474,6 +476,31 @@ def upload_scan_media():
             return jsonify({"warning": "Storage offline"}), 200
         return jsonify({"error": err_str}), 500
 
+@app.route('/api/upload/profile-pic', methods=['POST'])
+def upload_profile_pic():
+    """Upload a profile picture to Supabase Storage and return the public URL."""
+    data = request.json
+    if not data or "firebase_uid" not in data or "image" not in data:
+        return jsonify({"error": "Missing firebase_uid or image"}), 400
+
+    uid = data["firebase_uid"]
+    image_b64 = data["image"]
+
+    try:
+        url, err = upload_to_supabase(image_b64, "profile-pictures", folder=uid)
+        if url:
+            return jsonify({"url": url}), 200
+        elif err:
+            logger.error(f"Profile pic upload failed: {err}")
+            if "Name or service not known" in str(err) or "gaierror" in str(err):
+                return jsonify({"error": "Storage offline — cannot upload profile picture"}), 503
+            return jsonify({"error": str(err)}), 500
+        else:
+            return jsonify({"error": "Upload returned no URL"}), 500
+    except Exception as e:
+        logger.error(f"Profile pic upload exception: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/detect', methods=['POST'])
 def detect_deepfake():
     global deepfake_pipeline
@@ -592,8 +619,10 @@ def detect_deepfake():
 
         overlay = None
         heatmap_url = None
+        heatmap_b64 = None   # kept as fallback if Supabase upload fails
         facemesh_url = None
-        
+        facemesh_b64 = None
+
         if mask is not None:
             try:
                 heatmap = (mask * 255).astype(np.uint8)
@@ -601,15 +630,26 @@ def detect_deepfake():
                 img_bgr = cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
                 overlay = cv2.addWeighted(img_bgr, 0.6, heatmap, 0.4, 0)
                 overlay = DeepfakePipeline.draw_face_boxes(image, pipeline_result, heatmap_bgr=overlay)
-                
+
                 _, buf = cv2.imencode(".jpg", overlay)
-                heatmap_url, _ = upload_to_supabase(f"data:image/jpeg;base64,{base64.b64encode(buf).decode()}", "heatmaps", folder=firebase_uid)
-                
+                heatmap_b64 = f"data:image/jpeg;base64,{base64.b64encode(buf).decode()}"
+                uploaded_url, upload_err = upload_to_supabase(heatmap_b64, "heatmaps", folder=firebase_uid)
+                # Use Supabase URL when available, otherwise fall back to inline base64
+                # so the frontend always receives a usable URL and the heatmap button shows.
+                heatmap_url = uploaded_url if uploaded_url else heatmap_b64
+                if upload_err:
+                    logger.warning("Heatmap Supabase upload failed (using inline b64 fallback): %s", upload_err)
+
                 facemesh_img = DeepfakePipeline.draw_face_mesh(image, face_list)
                 if facemesh_img is not None:
                     _, fmb = cv2.imencode(".jpg", cv2.cvtColor(np.array(facemesh_img), cv2.COLOR_RGB2BGR))
-                    facemesh_url, _ = upload_to_supabase(f"data:image/jpeg;base64,{base64.b64encode(fmb).decode()}", "heatmaps", folder=f"{firebase_uid}/facemesh")
-            except Exception as e: print(f"Visualization error: {e}")
+                    facemesh_b64 = f"data:image/jpeg;base64,{base64.b64encode(fmb).decode()}"
+                    fm_url, fm_err = upload_to_supabase(facemesh_b64, "heatmaps", folder=f"{firebase_uid}/facemesh")
+                    facemesh_url = fm_url if fm_url else facemesh_b64
+                    if fm_err:
+                        logger.warning("Facemesh Supabase upload failed (using inline b64 fallback): %s", fm_err)
+            except Exception as e:
+                print(f"Visualization error: {e}")
 
         inference_time = round((time.time() - start_time) * 1000)
         conf_raw = pipeline_result["confidence"]          # [0, 1] fraction from pipeline
