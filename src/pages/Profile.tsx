@@ -1,0 +1,579 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence, useSpring } from 'framer-motion';
+import {
+   UserCircleIcon,
+   ShieldCheckIcon,
+   FingerPrintIcon,
+   MagnifyingGlassIcon,
+   CheckCircleIcon,
+   XCircleIcon,
+   FunnelIcon,
+   PencilIcon,
+   XMarkIcon,
+   CameraIcon,
+   ChevronLeftIcon,
+   ChevronRightIcon
+} from '@heroicons/react/24/outline';
+import { ModelType } from '../types';
+import { useAuth } from '../context/AuthContext';
+import { syncUser, uploadProfilePic, getUserProfile, getScanHistory, clearScanHistory } from '../services/api';
+import { auth } from '../firebase';
+
+interface EditProfileModalProps {
+   isOpen: boolean;
+   onClose: () => void;
+   user: any;
+   onSave: (updatedUser: any) => void;
+   isDark: boolean;
+}
+
+const useMousePosition = () => {
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const updateMousePosition = (e: MouseEvent) => {
+      setMousePosition({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener('mousemove', updateMousePosition);
+    return () => window.removeEventListener('mousemove', updateMousePosition);
+  }, []);
+
+  return mousePosition;
+};
+
+const CustomCursor = ({ isDark }: { isDark: boolean }) => {
+  const { x, y } = useMousePosition();
+  const cursorX = useSpring(0, { damping: 25, stiffness: 300 });
+  const cursorY = useSpring(0, { damping: 25, stiffness: 300 });
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      cursorX.set(e.clientX);
+      cursorY.set(e.clientY);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [cursorX, cursorY]);
+
+  return (
+    <motion.div
+      className="fixed top-0 left-0 z-[9999] pointer-events-none hidden lg:block"
+      style={{
+        x: cursorX,
+        y: cursorY,
+        translateX: '-50%',
+        translateY: '-50%',
+      }}
+    >
+      <div className="relative flex items-center justify-center">
+        {/* Crosshair lines */}
+        <div className="absolute h-8 w-[1px] bg-blue-500/40" />
+        <div className="absolute w-8 h-[1px] bg-blue-500/40" />
+
+        {/* Corner brackets */}
+        <div className="absolute -top-4 -left-4 h-2 w-2 border-t border-l border-blue-500" />
+        <div className="absolute -top-4 -right-4 h-2 w-2 border-t border-r border-blue-500" />
+        <div className="absolute -bottom-4 -left-4 h-2 w-2 border-b border-l border-blue-500" />
+        <div className="absolute -bottom-4 -right-4 h-2 w-2 border-b border-r border-blue-500" />
+
+        {/* Center dot */}
+        <div className="h-1 w-1 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.8)]" />
+
+        {/* Scanning ring */}
+        <motion.div
+          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="absolute h-10 w-10 rounded-full border border-blue-500/20"
+        />
+
+        {/* Coordinates */}
+        <div className="absolute top-6 left-6 flex flex-col font-mono text-[7px] uppercase tracking-[0.2em] text-blue-500/60">
+          <span>LAT: {((y / window.innerHeight) * 180 - 90).toFixed(4)}</span>
+          <span>LNG: {((x / window.innerWidth) * 360 - 180).toFixed(4)}</span>
+          <span className="mt-1 text-blue-500/30">SCANNING_ACTIVE</span>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
+const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, user, onSave, isDark }) => {
+   const fileInputRef = useRef<HTMLInputElement>(null);
+   const [formData, setFormData] = useState(user);
+   const [hasChanges, setHasChanges] = useState(false);
+   const [error, setError] = useState<string | null>(null);
+
+   useEffect(() => {
+      setFormData(user);
+      setError(null);
+   }, [user]);
+
+   useEffect(() => {
+      const changed = JSON.stringify(formData) !== JSON.stringify(user);
+      setHasChanges(changed);
+   }, [formData, user]);
+
+   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const validTypes = ['image/jpeg', 'image/png', 'image/jpg', 'image/webp'];
+      if (!validTypes.includes(file.type)) {
+         setError('System Error: File must be JPG, PNG, or WEBP.');
+         return;
+      }
+
+      if (file.size > 5 * 1024 * 1024) {
+         setError('System Error: File exceeds 5MB limit.');
+         return;
+      }
+
+      setError(null);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+         setFormData({ ...formData, avatar: reader.result as string });
+      };
+      reader.readAsDataURL(file);
+   };
+
+   const handleRemovePhoto = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      setFormData({ ...formData, avatar: null });
+      if (fileInputRef.current) fileInputRef.current.value = '';
+   };
+
+   useEffect(() => {
+      if (isOpen) {
+         document.body.style.overflow = 'hidden';
+      } else {
+         document.body.style.overflow = 'unset';
+      }
+      return () => { document.body.style.overflow = 'unset'; };
+   }, [isOpen]);
+
+   if (!isOpen) return null;
+
+   return (
+      <div className="modal-overlay" onClick={onClose}>
+         <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className={`modal-header p-6 border-b flex items-center justify-between ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
+               <h2 className="text-sm font-black uppercase tracking-[0.2em] heading-font text-blue-500/70">Edit Analyst Profile</h2>
+               <button onClick={onClose} className="p-1 hover:opacity-70 transition-opacity">
+                  <XMarkIcon className="w-5 h-5" />
+               </button>
+            </div>
+            <div className="modal-body p-8 space-y-8">
+               {/* Avatar Upload Section */}
+               <div className="flex flex-col items-center gap-4">
+                  <div className="relative group">
+                     <div
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`relative w-24 h-24 rounded-full border-2 border-dashed flex items-center justify-center transition-all duration-300 cursor-pointer overflow-hidden transform hover:scale-[1.03] ${isDark
+                           ? 'bg-zinc-900 border-zinc-800 hover:border-blue-500/50 hover:shadow-[0_0_20px_rgba(59,130,246,0.2)]'
+                           : 'bg-slate-50 border-slate-200 hover:border-blue-600/50 hover:shadow-[0_10px_20px_-5px_rgba(0,0,0,0.1)]'
+                           }`}
+                     >
+                        {formData.avatar ? (
+                           <img src={formData.avatar} alt="Preview" className="w-full h-full object-cover" />
+                        ) : (
+                           <UserCircleIcon className={`w-12 h-12 ${isDark ? 'text-zinc-700' : 'text-slate-300'}`} />
+                        )}
+
+                        <div className="absolute inset-0 bg-blue-600/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all backdrop-blur-[2px]">
+                           <CameraIcon className="w-6 h-6 text-white" />
+                        </div>
+                     </div>
+
+                     {formData.avatar && (
+                        <button
+                           onClick={handleRemovePhoto}
+                           className="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 flex items-center justify-center text-slate-400 hover:text-rose-500 hover:bg-rose-500/5 transition-all shadow-sm z-10"
+                        >
+                           <XMarkIcon className="w-3.5 h-3.5" />
+                        </button>
+                     )}
+                  </div>
+                  <div className="text-center">
+                     <p className="text-[10px] font-bold uppercase tracking-widest opacity-40">Click to change photo</p>
+                     {error && (
+                        <p className="text-[9px] font-bold text-rose-500 mt-2 uppercase tracking-tight">{error}</p>
+                     )}
+                  </div>
+                  <input
+                     type="file"
+                     ref={fileInputRef}
+                     onChange={handleFileChange}
+                     accept="image/*"
+                     className="hidden"
+                  />
+               </div>
+
+               <div className="space-y-4 pt-4 border-t border-zinc-900/5 dark:border-white/5">
+                  <div className="space-y-2">
+                     <label className="text-[10px] font-bold uppercase tracking-widest opacity-50 ml-1">Full Name</label>
+                     <input
+                        value={formData.name}
+                        onChange={e => setFormData({ ...formData, name: e.target.value })}
+                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'}`}
+                     />
+                  </div>
+                  <div className="space-y-2">
+                     <label className="text-[10px] font-bold uppercase tracking-widest opacity-50 ml-1">Username</label>
+                     <input
+                        value={formData.username}
+                        onChange={e => setFormData({ ...formData, username: e.target.value })}
+                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'}`}
+                     />
+                  </div>
+                  <div className="space-y-2">
+                     <label className="text-[10px] font-bold uppercase tracking-widest opacity-50 ml-1">Bio</label>
+                     <textarea
+                        value={formData.bio}
+                        rows={3}
+                        onChange={e => setFormData({ ...formData, bio: e.target.value })}
+                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium resize-none ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'}`}
+                     />
+                  </div>
+               </div>
+            </div>
+            <div className={`modal-footer p-6 bg-zinc-50/50 dark:bg-zinc-900/50 border-t flex gap-3 ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
+               <button
+                  onClick={() => onSave(formData)}
+                  disabled={!hasChanges}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all ${hasChanges ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:-translate-y-0.5 active:translate-y-0' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed dark:bg-zinc-800 dark:text-zinc-600'}`}
+               >
+                  Save Changes
+               </button>
+               <button onClick={onClose} className="btn-secondary flex-1 py-3">
+                  Cancel
+               </button>
+            </div>
+         </div>
+      </div>
+   );
+};
+
+const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
+   const isDark = theme === 'dark';
+   const { user: firebaseUser, profile, refreshProfile } = useAuth();
+   const [filter, setFilter] = useState<'all' | 'fake' | 'real'>('all');
+   const [currentPage, setCurrentPage] = useState(1);
+   const ITEMS_PER_PAGE = 10;
+   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+   const [user, setUser] = useState({
+      name: 'John Doe',
+      username: 'johndoe_foresight',
+      bio: 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
+      avatar: null
+   });
+
+   useEffect(() => {
+      if (profile) {
+         setUser({
+            name: profile.name || firebaseUser?.displayName || 'Venkata Sai',
+            username: profile.email?.split('@')[0] || firebaseUser?.email?.split('@')[0] || 'venkatasai_foresight',
+            bio: profile.bio || 'Senior Forensic Analyst specialized in Transformer-based deepfake detection architectures.',
+            avatar: profile.profile_pic_url || firebaseUser?.photoURL || null
+         });
+      }
+   }, [profile, firebaseUser]);
+
+   const [history, setHistory] = useState<any[]>([]);
+
+   useEffect(() => {
+      const fetchHistory = async () => {
+         if (firebaseUser?.uid) {
+            try {
+               const data = await getScanHistory(firebaseUser.uid);
+               if (Array.isArray(data)) {
+                  // Sort by newest first
+                  const sorted = [...data].sort((a, b) => 
+                     new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                  );
+                  // Format data to match table structure
+                  const formatted = sorted.map(item => ({
+                     id: item.id,
+                     date: new Date(item.created_at).toLocaleDateString(),
+                     name: item.file_name || 'Unknown',
+                     model: item.model_used || 'UNKNOWN',
+                     result: item.result || 'Unknown',
+                     confidence: item.confidence || 0
+                  }));
+                  setHistory(formatted);
+               }
+            } catch (err) {
+               console.error("Failed to load history:", err);
+            }
+         }
+      };
+      fetchHistory();
+   }, [firebaseUser]);
+
+   const filteredHistory = history.filter(item => {
+      if (filter === 'all') return true;
+      return item.result.toLowerCase() === filter;
+   });
+
+   const totalPages = Math.ceil(filteredHistory.length / ITEMS_PER_PAGE);
+   const paginatedHistory = filteredHistory.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+   // Calculate real stats based on history
+   const totalAnalyzed = history.length;
+   const fakeDetected = history.filter(i => i.result === 'Fake' || i.result === 'FAKE').length;
+   const realDetected = history.filter(i => i.result === 'Real' || i.result === 'REAL').length;
+
+   const modelsCount = history.reduce((acc, curr) => {
+       acc[curr.model] = (acc[curr.model] || 0) + 1;
+       return acc;
+   }, {} as Record<string, number>);
+   
+   let mostUsedModel = 'N/A';
+   if (Object.keys(modelsCount).length > 0) {
+       mostUsedModel = Object.keys(modelsCount).reduce((a, b) => modelsCount[a] > modelsCount[b] ? a : b);
+   }
+
+   const stats = [
+      { label: 'Total Analyzed', value: totalAnalyzed.toString(), icon: MagnifyingGlassIcon },
+      { label: 'Fake Detected', value: fakeDetected.toString(), icon: XCircleIcon, color: 'text-rose-500' },
+      { label: 'Real Detected', value: realDetected.toString(), icon: CheckCircleIcon, color: 'text-emerald-500' },
+      { label: 'Most Used Model', value: mostUsedModel, icon: FingerPrintIcon },
+   ];
+
+   const handleSaveProfile = async (updatedUser: any) => {
+      try {
+         let finalAvatarUrl = updatedUser.avatar;
+
+         if (firebaseUser) {
+            // If the avatar is a base64 string (newly uploaded), upload to Supabase Storage first
+            if (updatedUser.avatar && updatedUser.avatar.startsWith('data:image')) {
+               const uploadRes = await uploadProfilePic(firebaseUser.uid, updatedUser.avatar);
+               finalAvatarUrl = uploadRes.url;
+            }
+
+            await syncUser({
+               firebase_uid: firebaseUser.uid,
+               email: firebaseUser.email,
+               name: updatedUser.name,
+               profile_pic_url: finalAvatarUrl,
+               bio: updatedUser.bio,
+               save_history: true
+            });
+
+            // Refresh global profile state
+            await refreshProfile();
+         }
+
+         setIsEditModalOpen(false);
+      } catch (err) {
+         console.error("Failed to sync profile:", err);
+         alert("Failed to update profile picture or sync updates.");
+      }
+   };
+
+   const handleClearHistory = async () => {
+      if (!firebaseUser) return;
+      if (window.confirm("Are you sure you want to clear your detection history? This action cannot be undone.")) {
+         try {
+            await clearScanHistory(firebaseUser.uid);
+            setHistory([]);
+         } catch (error) {
+            console.error("Failed to clear history", error);
+            alert("Failed to clear history. Please try again.");
+         }
+      }
+   };
+
+   return (
+      <div>
+         <CustomCursor isDark={isDark} />
+      <div className="relative min-h-screen pb-20 overflow-x-hidden">
+         {/* Background Ambient Glows */}
+         <div className="fixed inset-0 overflow-hidden pointer-events-none">
+            <div className={`absolute -top-[5%] -right-[10%] w-[25%] h-[25%] rounded-full blur-[120px] opacity-30 mix-blend-screen animate-blob ${isDark ? 'bg-emerald-500' : 'bg-emerald-300'}`} />
+            <div className={`absolute top-[40%] -left-[10%] w-[25%] h-[25%] rounded-full blur-[100px] opacity-30 mix-blend-screen animate-blob animation-delay-2000 ${isDark ? 'bg-blue-500' : 'bg-blue-300'}`} />
+         </div>
+
+         <div className="space-y-24 fade-in relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            {/* User Info Header */}
+            <header className="flex flex-col md:flex-row items-center md:items-end justify-between gap-10 pt-12 pb-16 border-b border-zinc-900/5 dark:border-white/5">
+               <div className="flex flex-col md:flex-row items-center gap-10">
+                  <div className={`relative w-40 h-40 rounded-full border-4 p-1 transition-all duration-500 scale-105 ${isDark ? 'border-zinc-800 bg-zinc-950 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)]' : 'border-slate-100 bg-white shadow-[0_20px_40px_-15px_rgba(0,0,0,0.1)]'}`}>
+                     <div className={`w-full h-full rounded-full flex items-center justify-center overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-slate-50'}`}>
+                        {user.avatar ? (
+                           <img src={user.avatar} alt="Profile" className="w-full h-full object-cover" />
+                        ) : (
+                           <UserCircleIcon className={`w-24 h-24 ${isDark ? 'text-zinc-800' : 'text-slate-200'}`} />
+                        )}
+                     </div>
+                     <div className="absolute -bottom-2 -right-2 w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center text-white shadow-lg border-4 border-white dark:border-zinc-950">
+                        <ShieldCheckIcon className="w-5 h-5" />
+                     </div>
+                  </div>
+                  <div className="text-center md:text-left space-y-4">
+                     <div className="space-y-1">
+                        <h1 className="text-5xl font-black tracking-tighter heading-font leading-none">{user.name}</h1>
+                        <p className={`text-sm font-medium tracking-wide opacity-50 ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>@{user.username}</p>
+                     </div>
+                     <p className={`text-sm leading-relaxed max-w-md ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+                        {user.bio}
+                     </p>
+                     <div className="flex flex-wrap justify-center md:justify-start gap-4 pt-2">
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isDark ? 'bg-blue-500/5 border-blue-500/20 text-blue-500' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>Senior Analyst</span>
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-500' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>Node Verified</span>
+                     </div>
+                  </div>
+               </div>
+
+               <button
+                  onClick={() => setIsEditModalOpen(true)}
+                  className={`flex items-center gap-3 px-8 py-3.5 rounded-full border text-[11px] font-bold uppercase tracking-widest transition-all duration-300 transform hover:-translate-y-1 active:translate-y-0 ${isDark ? 'bg-zinc-950 border-zinc-800 hover:bg-zinc-900 text-zinc-400 hover:text-white' : 'bg-white border-slate-200 hover:bg-slate-50 text-slate-600 hover:text-slate-900 shadow-sm'}`}
+               >
+                  <PencilIcon className="w-4 h-4" />
+                  <span>Edit Profile</span>
+               </button>
+            </header>
+
+            {/* Statistics Section */}
+            <section className="space-y-10">
+               <div className="flex items-center gap-4">
+                  <div className="h-px flex-1 bg-zinc-900/5 dark:bg-white/5" />
+                  <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-500/70 heading-font">Global Intelligence</h2>
+                  <div className="h-px flex-1 bg-zinc-900/5 dark:bg-white/5" />
+               </div>
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
+                  {stats.map((stat, i) => (
+                     <div key={i} className={`card-foresight p-8 flex flex-col justify-between group h-48 transition-all duration-300`}>
+                        <div className="flex items-center justify-between mb-4">
+                           <div className={`p-3 rounded-2xl transition-colors duration-300 ${isDark ? 'bg-zinc-900 group-hover:bg-zinc-800' : 'bg-slate-50 group-hover:bg-slate-100'}`}>
+                              <stat.icon className={`w-6 h-6 ${stat.color || 'text-blue-500'}`} />
+                           </div>
+                        </div>
+                        <div>
+                           <p className={`text-[11px] font-bold uppercase tracking-[0.2em] mb-2 opacity-40`}>{stat.label}</p>
+                           <h3 className="text-4xl font-black heading-font tracking-tight">{stat.value}</h3>
+                        </div>
+                     </div>
+                  ))}
+               </div>
+            </section>
+
+            {/* Detection History Table */}
+            <section className="space-y-10">
+               <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4 flex-1">
+                     <h2 className="text-[10px] font-black uppercase tracking-[0.4em] text-blue-500/70 heading-font whitespace-nowrap">Detection History</h2>
+                     <div className="h-px flex-1 bg-zinc-900/5 dark:bg-white/5" />
+                  </div>
+
+                  <div className="flex items-center gap-4 ml-8">
+                     <button
+                        onClick={handleClearHistory}
+                        className={`px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest border transition-all duration-300 ${isDark ? 'border-zinc-800 text-rose-500 hover:bg-rose-500 hover:text-white hover:border-rose-500' : 'border-slate-200 text-rose-500 hover:bg-rose-500 hover:text-white hover:border-rose-500'}`}
+                     >
+                        Clear History
+                     </button>
+                     <div className={`inline-flex p-1.5 rounded-full border ${isDark ? 'bg-zinc-950/50 border-zinc-900' : 'bg-slate-50 border-slate-200 shadow-sm'}`}>
+                        {(['all', 'real', 'fake'] as const).map((opt) => (
+                           <button
+                              key={opt}
+                              onClick={() => { setFilter(opt); setCurrentPage(1); }}
+                              className={`px-5 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest transition-all duration-300 ${filter === opt ? 'bg-blue-600 text-white shadow-xl shadow-blue-600/30' : 'opacity-40 hover:opacity-100'}`}
+                           >
+                              {opt}
+                           </button>
+                        ))}
+                     </div>
+                  </div>
+               </div>
+
+               <div className={`card-foresight overflow-hidden border-none shadow-none bg-transparent`}>
+                  <div className="overflow-x-auto">
+                     <table className="table-foresight">
+                        <thead>
+                           <tr>
+                              <th>Analysis Date</th>
+                              <th>Image Source</th>
+                              <th>Forensic Model</th>
+                              <th>Verdict</th>
+                              <th>Confidence</th>
+                           </tr>
+                        </thead>
+                        <tbody>
+                           {paginatedHistory.map((row) => (
+                              <tr key={row.id} className="group transition-all duration-300">
+                                 <td className={`font-medium ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{row.date}</td>
+                                 <td className="font-bold tracking-tight text-sm">{row.name}</td>
+                                 <td>
+                                    <span className={`px-3 py-1 rounded-lg text-[10px] font-bold tracking-widest border ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-white border-slate-200'}`}>
+                                       {row.model} PROTOCOL
+                                    </span>
+                                 </td>
+                                 <td>
+                                    <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all group-hover:scale-105 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                       {row.result}
+                                    </div>
+                                 </td>
+                                 <td>
+                                    <div className="flex items-center gap-4">
+                                       <span className="font-mono font-bold text-sm tracking-tighter">{row.confidence}%</span>
+                                       <div className={`h-1.5 w-24 rounded-full overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-slate-100'}`}>
+                                          <div
+                                             className={`h-full rounded-full transition-all duration-1000 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'}`}
+                                             style={{ width: `${row.confidence}%` }}
+                                          />
+                                       </div>
+                                    </div>
+                                 </td>
+                              </tr>
+                           ))}
+                        </tbody>
+                     </table>
+                  </div>
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                     <div className="mt-10 flex items-center justify-center gap-6 border-t border-zinc-900/5 dark:border-white/5 pt-10">
+                        <button
+                           onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                           disabled={currentPage === 1}
+                           className={`p-2.5 rounded-xl border transition-all ${currentPage === 1 
+                              ? 'opacity-20 cursor-not-allowed' 
+                              : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
+                        >
+                           <ChevronLeftIcon className="w-5 h-5" />
+                        </button>
+                        
+                        <div className="flex items-center gap-2">
+                           <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
+                              Page {currentPage} of {totalPages}
+                           </span>
+                        </div>
+
+                        <button
+                           onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                           disabled={currentPage === totalPages}
+                           className={`p-2.5 rounded-xl border transition-all ${currentPage === totalPages 
+                              ? 'opacity-20 cursor-not-allowed' 
+                              : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
+                        >
+                           <ChevronRightIcon className="w-5 h-5" />
+                        </button>
+                     </div>
+                  )}
+               </div>
+            </section>
+         </div>
+
+         <EditProfileModal
+            isOpen={isEditModalOpen}
+            onClose={() => setIsEditModalOpen(false)}
+            user={user}
+            onSave={handleSaveProfile}
+            isDark={isDark}
+         />
+      </div>
+      </div>
+   );
+};
+
+export default Profile;
