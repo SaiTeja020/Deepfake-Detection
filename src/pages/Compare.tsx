@@ -103,20 +103,31 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
 
           <motion.div 
             layoutId={`heatmap-container-${modelName}`}
-            onClick={() => result && setZoomedImage({ url: result.attentionMapUrl, model: modelName })}
-            className={`aspect-video rounded-2xl overflow-hidden border cursor-zoom-in group/heatmap relative ${isDark ? 'bg-black border-zinc-800' : 'bg-slate-50 border-slate-100'}`}
+            onClick={() => result?.attentionMapUrl && setZoomedImage({ url: result.attentionMapUrl, model: modelName })}
+            className={`aspect-video rounded-2xl overflow-hidden border group/heatmap relative ${
+              result?.attentionMapUrl ? 'cursor-zoom-in' : 'cursor-default'
+            } ${isDark ? 'bg-black border-zinc-800' : 'bg-slate-50 border-slate-100'}`}
           >
-            <motion.img 
-              layoutId={`heatmap-img-${modelName}`}
-              src={result.attentionMapUrl} 
-              className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" 
-              alt={`${modelName} Heatmap`} 
-            />
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/heatmap:opacity-100 transition-opacity bg-black/20">
-              <div className="p-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
-                <EyeIcon className="w-6 h-6" />
+            {result.attentionMapUrl ? (
+              <>
+                <motion.img 
+                  layoutId={`heatmap-img-${modelName}`}
+                  src={result.attentionMapUrl} 
+                  className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" 
+                  alt={`${modelName} Heatmap`} 
+                />
+                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/heatmap:opacity-100 transition-opacity bg-black/20">
+                  <div className="p-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
+                    <EyeIcon className="w-6 h-6" />
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="w-full h-full flex flex-col items-center justify-center gap-2 opacity-20">
+                <EyeIcon className="w-8 h-8" />
+                <p className="text-[10px] font-bold uppercase tracking-widest">Heatmap Unavailable</p>
               </div>
-            </div>
+            )}
           </motion.div>
 
           <div className="space-y-4">
@@ -144,21 +155,26 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
           <p className={`text-sm font-light ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Benchmark ViT vs Swin Transformer performance side-by-side.</p>
         </div>
 
-        <div className="flex flex-col items-end gap-2">
-          <button
-            disabled={!image || isDetecting}
-            onClick={runInference}
-            className={`btn-primary px-10 ${!image || isDetecting ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
-          >
-            {isDetecting ? 'Running Analysis...' : 'Run Benchmarks'}
-          </button>
-          {error && <p className="text-rose-500 text-xs font-medium">{error}</p>}
-        </div>
+        {/* Desktop-only button in the header as it was originally */}
+        {!vitResult && (
+          <div className="hidden md:flex flex-col items-end gap-2">
+            <button
+              disabled={!image || isDetecting}
+              onClick={runInference}
+              className={`btn-primary px-10 ${!image || isDetecting ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+            >
+              {isDetecting ? 'Running Analysis...' : 'Run Benchmarks'}
+            </button>
+            {error && <p className="text-rose-500 text-xs font-medium">{error}</p>}
+          </div>
+        )}
       </header>
 
       <div className="max-w-4xl mx-auto space-y-12">
-        <div className={`p-8 rounded-2xl border transition-all flex flex-col md:flex-row items-center gap-8 ${isDark ? 'bg-zinc-900/10 border-zinc-900' : 'bg-slate-50 border-slate-200'}`}>
-          <div className="relative group shrink-0">
+        <div className={`p-8 rounded-2xl border transition-all flex flex-col items-center gap-8 ${
+          isDark ? 'bg-zinc-900/10 border-zinc-900' : 'bg-slate-50 border-slate-200'
+        } ${!vitResult ? 'max-w-md mx-auto w-full justify-center md:max-w-none md:mx-0 md:flex-row' : 'md:flex-row'}`}>
+          <div className="relative group shrink-0 flex flex-col items-center gap-4">
             <div
               onClick={() => !image && fileInputRef.current?.click()}
               className={`w-40 h-40 rounded-2xl border-2 border-dashed transition-all flex items-center justify-center cursor-pointer overflow-hidden relative ${isRemoving ? 'fade-out' : ''} ${isDark ? 'bg-zinc-950 border-zinc-800 hover:border-blue-500/30' : 'bg-white border-slate-200 shadow-sm hover:border-blue-600/30'}`}
@@ -191,15 +207,33 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
 
             {/* File Metadata */}
             {image && fileInfo && (
-              <div className={`absolute -bottom-6 left-0 right-0 text-center animate-in fade-in duration-500 ${isRemoving ? 'fade-out' : ''}`}>
-                <p className={`text-[10px] font-bold truncate px-2 ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+              <div className={`text-center animate-in fade-in duration-500 ${isRemoving ? 'fade-out' : ''}`}>
+                <p className={`text-[10px] font-bold truncate max-w-[150px] ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
                   {fileInfo.name.length > 15 ? fileInfo.name.substring(0, 12) + "..." : fileInfo.name} • {fileInfo.size}
                 </p>
               </div>
             )}
+
+            {/* Run Benchmarks button below the box on mobile when not analyzed yet */}
+            {!vitResult && (
+              <div className="flex flex-col items-center gap-2 w-full md:hidden">
+                <button
+                  disabled={!image || isDetecting}
+                  onClick={runInference}
+                  className={`w-full py-3 px-8 rounded-xl font-bold text-xs uppercase tracking-widest transition-all ${
+                    !image || isDetecting
+                      ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
+                      : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-600/20 active:scale-[0.99]'
+                  }`}
+                >
+                  {isDetecting ? 'Running Benchmarks...' : 'Run Benchmarks'}
+                </button>
+                {error && <p className="text-rose-500 text-xs font-medium text-center">{error}</p>}
+              </div>
+            )}
           </div>
 
-          <div className="flex-1 space-y-4 text-center md:text-left">
+          <div className={`flex-1 space-y-4 text-center md:text-left ${!vitResult ? 'hidden md:block' : ''}`}>
             <h3 className="text-xl font-bold">Dual-Inference Pipeline</h3>
             <p className={`text-sm leading-relaxed ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
               Compare state-of-the-art transformer architectures. Global attention (ViT) vs Hierarchical Shifted Windows (Swin). Upload one image to run both models simultaneously.
@@ -207,14 +241,16 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
           </div>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-8">
+        {/* Grid of benchmark results - hidden on mobile until results are ready, visible as grid on desktop */}
+        <div className={`grid md:grid-cols-2 gap-8 ${vitResult && swinResult ? '' : 'hidden md:grid'}`}>
           <ModelResult title="Vision Transformer" modelName="ViT" result={vitResult} />
           <ModelResult title="Swin Transformer" modelName="Swin" result={swinResult} />
         </div>
 
         {vitResult && swinResult && (
-          <div className={`p-8 rounded-2xl border ${isDark ? 'bg-blue-500/5 border-blue-500/10' : 'bg-blue-50/50 border-blue-100'}`}>
-            <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 mb-8 text-center">Inference Consensus</h3>
+          <>
+            <div className={`p-8 rounded-2xl border ${isDark ? 'bg-blue-500/5 border-blue-500/10' : 'bg-blue-50/50 border-blue-100'}`}>
+              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 mb-8 text-center">Inference Consensus</h3>
             <div className="grid md:grid-cols-3 gap-12 text-center">
               <div className="space-y-1">
                 <p className={`text-[10px] font-bold uppercase tracking-widest opacity-40 ${isDark ? 'text-white' : 'text-slate-900'}`}>Confidence Delta</p>
@@ -254,7 +290,8 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
               </div>
             </div>
           </div>
-        )}
+        </>
+      )}
       </div>
 
       {/* Pop-up Heatmap Viewer (Google Folder Style) */}

@@ -745,16 +745,19 @@ if __name__ == "__main__":
     image_path = sys.argv[1]
     img = Image.open(image_path).convert("RGB")
 
-    # Load the ViT model (same as application)
+    # Load the frequency-refined ViT model (same as production)
     import os
-    from transformers import ViTImageProcessor, ViTForImageClassification
+    from transformers import AutoImageProcessor, AutoModelForImageClassification
 
-    MODEL_NAME = "SARVM/ViT_Deepfake"
+    MODEL_NAME = "SARVM/Frequency-Refined-ViT"
     HF_TOKEN = os.getenv("HF_TOKEN")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    processor = ViTImageProcessor.from_pretrained(MODEL_NAME, token=HF_TOKEN)
-    model = ViTForImageClassification.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+    processor = AutoImageProcessor.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+    model = AutoModelForImageClassification.from_pretrained(
+        MODEL_NAME, token=HF_TOKEN, ignore_mismatched_sizes=True,
+        attn_implementation="eager",
+    )
     model.config.id2label = {0: "FAKE", 1: "REAL"}
     model.config.label2id = {"FAKE": 0, "REAL": 1}
     model.to(device).eval()
@@ -762,3 +765,4 @@ if __name__ == "__main__":
     pipe = DeepfakePipeline(model, processor, device)
     result = pipe.run(img)
     print(json.dumps(result, indent=2))
+

@@ -76,8 +76,8 @@ print(f"Using device: {DEVICE}")
 
 # Model management
 MODEL_PATHS = {
-    "ViT": "SARVM/ViT_Deepfake",
-    "Swin Transformer": "SARVM/Swin_Transformer",
+    "ViT": "SARVM/Frequency-Refined-ViT",
+    "Swin Transformer": "SARVM/Frequency-Swin",
 }
 model_cache = {"models": {}, "processors": {}, "names": {}, "freq_branches": {}, "fusion_heads": {}}
 deepfake_pipeline = None
@@ -147,50 +147,42 @@ def get_model(model_type="ViT"):
             model_cache["names"][model_type] = actual_model_name
 
             # ------------------------------------------------------------------
-            # Load Frequency Branch + FusionClassifier (graceful fallback)
+            # Load standalone FrequencyBranch from SARVM/Frequency_Branch
             #
-            # Each model's HF repo contains its own fused checkpoint:
-            #   SARVM/Swin_Transformer → swin_fused_final.pth
-            #   SARVM/Refined_ViT     → vit_freq_fusion_best.pth
+            # The new SARVM/Frequency-Swin and SARVM/Frequency-Refined-ViT models
+            # are complete, self-contained safetensors checkpoints — they already
+            # have frequency-domain knowledge baked in from training.  There are
+            # NO separate .pth fusion-classifier weights to download.
             #
-            # SARVM/Frequency_Branch holds ONLY the raw FrequencyBranch CNN
-            # weights (freq_branch_standalone.pth) — it is never used here.
+            # We still load the raw FrequencyBranch CNN from the standalone repo
+            # (SARVM/Frequency_Branch) so the pipeline can extract supplemental
+            # frequency features for logging / future ensemble use.  The
+            # FusionClassifier (fusion_head) is intentionally left as None;
+            # the pipeline will therefore call _predict_spatial_only(), which
+            # runs the already-frequency-aware backbone directly.
             # ------------------------------------------------------------------
             if _FREQ_BRANCH_AVAILABLE:
                 try:
-                    # Resolve the correct repo + filename per backbone
-                    if "Swin" in model_type:
-                        fusion_repo     = "SARVM/Swin_Transformer"
-                        fusion_filename = "swin_fused_final.pth"
-                    else:
-                        fusion_repo     = "SARVM/Refined_ViT"
-                        fusion_filename = "vit_freq_fusion_best.pth"
-
-                    fusion_weights_path = hf_hub_download(
-                        repo_id=fusion_repo,
-                        filename=fusion_filename,
+                    from safetensors.torch import load_file as safetensors_load_file
+                    standalone_path = hf_hub_download(
+                        repo_id="SARVM/Frequency_Branch",
+                        filename="freq_branch.safetensors",
                         token=hf_token,
                     )
-                    checkpoint = torch.load(fusion_weights_path, map_location=DEVICE)
-
-                    # FrequencyBranch — embed_dim is always 768
+                    # safetensors stores a flat state_dict — load directly
+                    state_dict = safetensors_load_file(standalone_path, device=str(DEVICE))
                     freq_branch = FrequencyBranch(embed_dim=768).to(DEVICE)
-                    freq_branch.load_state_dict(checkpoint['freq_branch_state_dict'])
+                    freq_branch.load_state_dict(state_dict)
                     freq_branch.eval()
                     for param in freq_branch.parameters():
                         param.requires_grad = False
 
-                    # FusionClassifier — spatial_dim differs per backbone
-                    spatial_dim = 1024 if "Swin" in model_type else 768
-                    fusion_head = FusionClassifier(spatial_dim=spatial_dim, freq_dim=768).to(DEVICE)
-                    fusion_head.load_state_dict(checkpoint['fusion_head_state_dict'])
-                    fusion_head.eval()
-
+                    # No separate FusionClassifier — new backbone handles fusion
                     model_cache["freq_branches"][model_type] = freq_branch
-                    model_cache["fusion_heads"][model_type] = fusion_head
-                    print(f"Fusion weights loaded for {model_type} from {fusion_repo} (spatial_dim={spatial_dim}).")
+                    model_cache["fusion_heads"][model_type] = None
+                    print(f"Standalone FrequencyBranch loaded for {model_type} from SARVM/Frequency_Branch (safetensors).")
                 except Exception as fe:
-                    print(f"Warning: Fusion weights unavailable for {model_type} — spatial-only mode: {fe}")
+                    print(f"Warning: Standalone FrequencyBranch unavailable for {model_type}: {fe}")
                     model_cache["freq_branches"][model_type] = None
                     model_cache["fusion_heads"][model_type] = None
             else:
@@ -239,48 +231,168 @@ def compute_vit_rollout(attentions):
         joint_attentions[n] = aug_att_mat[n] @ joint_attentions[n - 1]
     return joint_attentions[-1]
 
-def compute_swin_heatmap(attentions):
-    """Aggregate Swin Transformer attentions into a spatial importance map.
+def compute_gradcam(
+    model,
+    pixel_values: torch.Tensor,
+    fake_idx: int,
+) -> "np.ndarray | None":
+    """
+    GradCAM on a spatial feature map.
 
-    Swin attentions have shape [B, heads, N_windows, win_h*win_w, win_h*win_w]
-    (or [B, heads, seq_len, seq_len] for shifted-window layers).
-    We cannot do a spatial reshape directly from per-window attention because
-    the token ordering is window-local, not global.  Instead we take the
-    row-sum of each attention matrix as a per-token importance score and
-    average across all stages and heads, then reshape into the closest square
-    spatial grid — which gives a coarse but valid global saliency map.
+    For Swin we hook into an intermediate encoder stage (14×14 = 196 tokens)
+    rather than the final layernorm (7×7 = 49 tokens) for better spatial
+    resolution.  For ViT we hook into the final layernorm (196+1 tokens).
+
+    Uses absolute-value instead of ReLU so that all discriminative regions
+    are visible — ReLU on a 7×7 grid zeros most cells leaving a single blob.
+
+    Returns:
+        numpy array of shape (s, s) ready for upsampling, or None on failure.
     """
     try:
-        importance_maps = []
-        for stage_att in attentions:
-            # stage_att: [B, heads, T, T]  (T = seq_len for that stage)
-            att = stage_att.detach().cpu().float()          # [B, H, T, T]
-            # Row-sum → per-token importance: [B, H, T]
-            token_imp = att.sum(dim=-1)                     
-            # Average over heads: [B, T]
-            token_imp = token_imp.mean(dim=1).squeeze(0)   # [T]
-            s = int(np.sqrt(token_imp.size(0)))
-            if s * s != token_imp.size(0):
-                # Sequence length isn't a perfect square (e.g. shifted windows);
-                # truncate to nearest square so reshape succeeds.
-                token_imp = token_imp[: s * s]
-            importance_maps.append(token_imp.view(s, s).numpy())
+        activations: dict = {}
+        gradients: dict  = {}
 
-        if not importance_maps:
+        # ── Find the best hook target ──────────────────────────────────
+        hook_target = None
+        skip_cls = False
+
+        if hasattr(model, 'swin') and hasattr(model.swin, 'encoder'):
+            # Swin: prefer second-to-last stage for 14×14 resolution
+            # Structure: model.swin.encoder.layers[i].blocks[j].layernorm_after
+            stages = model.swin.encoder.layers
+            found = False
+            if len(stages) >= 2:
+                try:
+                    hook_target = stages[-2].blocks[-1].layernorm_after
+                    found = True
+                    logger.info("compute_gradcam: hooking Swin stage %d (14×14)",
+                                len(stages) - 2)
+                except (AttributeError, IndexError):
+                    pass
+            if not found:
+                # Fallback to final layernorm (7×7)
+                hook_target = getattr(model.swin, 'layernorm', None)
+                logger.info("compute_gradcam: hooking Swin final layernorm (7×7)")
+            skip_cls = False
+
+        elif hasattr(model, 'vit') and hasattr(model.vit, 'layernorm'):
+            hook_target = model.vit.layernorm
+            skip_cls = True   # ViT has a CLS token prepended
+
+        else:
+            # Generic fallback: find the last LayerNorm in the model
+            for name, module in model.named_modules():
+                if isinstance(module, torch.nn.LayerNorm):
+                    hook_target = module
+                    skip_cls = False
+
+        if hook_target is None:
+            logger.warning("compute_gradcam: no suitable hook target found")
             return None
 
-        # Upsample all stages to the largest spatial resolution and average
-        target_h, target_w = importance_maps[-1].shape  # last stage is largest for Swin
-        combined = np.zeros((target_h, target_w), dtype=np.float32)
-        for imp in importance_maps:
-            resized = cv2.resize(imp.astype(np.float32), (target_w, target_h),
-                                 interpolation=cv2.INTER_LINEAR)
-            combined += resized
-        combined /= len(importance_maps)
-        return combined
+        def _fwd(module, inp, out):
+            activations['feat'] = out
+
+        def _bwd(module, grad_in, grad_out):
+            gradients['feat'] = grad_out[0]
+
+        h_f = hook_target.register_forward_hook(_fwd)
+        h_b = hook_target.register_full_backward_hook(_bwd)
+
+        try:
+            pv = pixel_values.detach().clone().requires_grad_(True)
+            model.zero_grad()
+            out = model(pixel_values=pv)
+            score = torch.softmax(out.logits, dim=-1)[0, fake_idx]
+            score.backward()
+        finally:
+            h_f.remove()
+            h_b.remove()
+
+        feat = activations.get('feat')
+        grad = gradients.get('feat')
+        if feat is None or grad is None:
+            logger.warning("compute_gradcam: hooks captured nothing")
+            return None
+
+        feat = feat.detach().squeeze(0).float()  # (seq, channels)
+        grad = grad.detach().squeeze(0).float()  # (seq, channels)
+
+        # Skip CLS token for ViT
+        if skip_cls:
+            feat = feat[1:]
+            grad = grad[1:]
+
+        # Channel importance: global-average the gradient over the sequence
+        # then weight feature channels — standard GradCAM formulation
+        weights = grad.mean(dim=0)            # (channels,)
+        cam = (feat * weights).sum(dim=-1)    # (seq,)
+        # abs() instead of relu(): preserves ALL discriminative regions.
+        # relu() on coarse grids zeros most cells → single blob artifact.
+        cam = cam.abs()
+
+        # Reshape sequence → square spatial grid
+        seq_len = cam.size(0)
+        s = int(np.sqrt(seq_len))
+        if s * s != seq_len:
+            cam = cam[:s * s]  # truncate if non-square
+        cam_2d = cam.reshape(s, s).cpu().numpy().astype(np.float32)
+
+        logger.info("compute_gradcam: %dx%d map, fake_idx=%d, "
+                    "min=%.4f, max=%.4f, nonzero=%d/%d",
+                    s, s, fake_idx,
+                    cam_2d.min(), cam_2d.max(),
+                    int((cam_2d > 0).sum()), s * s)
+        return cam_2d
     except Exception as exc:
-        logger.warning("compute_swin_heatmap failed: %s", exc)
+        logger.warning("compute_gradcam failed: %s", exc, exc_info=True)
         return None
+
+
+
+def compute_gradient_saliency(
+    model,
+    pixel_values: torch.Tensor,
+    fake_idx: int,
+) -> "np.ndarray | None":
+    """
+    Gradient-based saliency map: |d(fake_score)/d(pixel_values)|.
+
+    Works for ANY model architecture (ViT, Swin, custom) regardless of
+    whether the model returns attention weights.  Used as a guaranteed
+    fallback when attention-based heatmaps return None.
+
+    Args:
+        model        : the loaded classification model (in eval mode)
+        pixel_values : preprocessed image tensor (1, C, H, W) already on device
+        fake_idx     : class index for the "FAKE" label
+
+    Returns:
+        numpy array of shape (H, W) with raw (un-normalised) saliency, or None.
+    """
+    try:
+        # Fresh copy with grad tracking — must NOT be inside torch.no_grad()
+        pv = pixel_values.detach().clone().requires_grad_(True)
+        model.zero_grad()
+        out = model(pixel_values=pv)
+        fake_score = torch.softmax(out.logits, dim=-1)[0, fake_idx]
+        fake_score.backward()
+
+        if pv.grad is None:
+            logger.warning("compute_gradient_saliency: grad is None after backward")
+            return None
+
+        # |grad| max-pooled over colour channels → (H, W)
+        saliency = pv.grad.abs().squeeze(0).max(dim=0)[0]
+        result = saliency.detach().cpu().numpy()
+        logger.info("compute_gradient_saliency: map shape %s, min=%.4f, max=%.4f",
+                    result.shape, result.min(), result.max())
+        return result
+    except Exception as exc:
+        logger.warning("compute_gradient_saliency failed: %s", exc, exc_info=True)
+        return None
+
 
 def upload_to_supabase(image_data: str, bucket: str, folder: str = "") -> tuple[str | None, str | None]:
     """Helper to upload base64 image data to Supabase Storage."""
@@ -571,51 +683,119 @@ def detect_deepfake():
 
         mask = None
         outside_fraction = 0.0
-        if attentions is None:
-            logger.warning("Model returned no attention weights — heatmap unavailable. "
-                           "Check that output_attentions=True is set in model config.")
+
+        # ------------------------------------------------------------------ #
+        # Heatmap strategy                                                     #
+        #                                                                      #
+        # ViT  : Attention rollout from CLS token — semantic, face-focused    #
+        # Swin : GradCAM on final LayerNorm feature map — spatially accurate  #
+        # Both : Gaussian-smoothed and re-normalised before rendering          #
+        # Fallback: gradient saliency when both primary methods fail           #
+        # ------------------------------------------------------------------ #
+        _fake_idx = label2id.get("FAKE", 0)
+        is_swin = (
+            "Swin" in type(m).__name__
+            or "swin" in getattr(m.config, "model_type", "").lower()
+        )
+        logger.info("Heatmap: model_class=%s, config.model_type=%s, is_swin=%s",
+                    type(m).__name__,
+                    getattr(m.config, "model_type", "unknown"),
+                    is_swin)
+
+        raw_mask = None
+
+        if is_swin:
+            # GradCAM: gradient w.r.t. final Swin feature map
+            raw_mask = compute_gradcam(m, inputs_full["pixel_values"], _fake_idx)
         else:
-            try:
-                if "Swin" in str(type(m)):
-                    mask = compute_swin_heatmap(attentions)
-                else:
-                    rollout = compute_vit_rollout(attentions)
-                    # rollout[0] = attention from CLS token; skip CLS itself (token 0)
-                    mask_raw = rollout[0, 1:]
-                    s = int(np.sqrt(mask_raw.size(0)))
-                    mask = mask_raw.reshape(s, s).cpu().numpy()
+            # ViT attention rollout: CLS-token attention through all layers
+            if attentions is not None:
+                try:
+                    rollout  = compute_vit_rollout(attentions)
+                    mask_raw = rollout[0, 1:]       # CLS → patch tokens
+                    s        = int(np.sqrt(mask_raw.size(0)))
+                    raw_mask = mask_raw.reshape(s, s).cpu().numpy().astype(np.float32)
+                    logger.info("ViT attention rollout: %dx%d grid", s, s)
+                except Exception as e:
+                    logger.warning("ViT rollout failed: %s", e, exc_info=True)
 
-                if mask is not None:
-                    # Normalize to [0, 1]
-                    mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
-                    # Resize to original image dimensions: cv2.resize expects (W, H)
-                    img_w, img_h = image.size
-                    mask = cv2.resize(mask.astype(np.float32), (img_w, img_h),
-                                      interpolation=cv2.INTER_LINEAR)
-            except Exception as e:
-                logger.warning("Heatmap generation error: %s", e, exc_info=True)
+            # ViT fallback: GradCAM
+            if raw_mask is None:
+                logger.info("ViT rollout unavailable — trying GradCAM")
+                raw_mask = compute_gradcam(m, inputs_full["pixel_values"], _fake_idx)
 
-        # Run pipeline with attention awareness
+        # Last-resort: gradient saliency (works but tends to highlight background)
+        if raw_mask is None:
+            logger.info("GradCAM unavailable — falling back to gradient saliency")
+            raw_mask = compute_gradient_saliency(m, inputs_full["pixel_values"], _fake_idx)
+
+        # Post-process: normalise → resize → smooth → re-normalise
+        if raw_mask is not None:
+            img_w, img_h = image.size
+            nm = (raw_mask - raw_mask.min()) / (raw_mask.max() - raw_mask.min() + 1e-8)
+            # INTER_CUBIC produces smoother contours from coarse grids (e.g. 7×7 Swin)
+            nm = cv2.resize(nm.astype(np.float32), (img_w, img_h),
+                            interpolation=cv2.INTER_CUBIC)
+            # Adaptive Gaussian kernel: ~8% of the shorter dimension, always odd
+            blur_k = max(31, int(min(img_w, img_h) * 0.08) | 1)
+            nm = cv2.GaussianBlur(nm, (blur_k, blur_k), 0)
+            mask = (nm - nm.min()) / (nm.max() - nm.min() + 1e-8)
+            logger.info("Final heatmap mask: shape=%s, method=%s, blur_kernel=%d",
+                        mask.shape,
+                        "gradcam" if is_swin else "vit_rollout",
+                        blur_k)
+        else:
+            logger.warning("All heatmap methods failed — no overlay will be produced")
+
+
+        # ── Run pipeline FIRST to get face bounding boxes ──────────────
         try:
-            mask_val = float(mask.mean()) if mask is not None else 0.0
-            pipeline_result = deepfake_pipeline.run(image, outside_fraction=mask_val)
+            pipeline_result = deepfake_pipeline.run(image, outside_fraction=0.0)
         except Exception as e:
             logger.error(f"Pipeline run failed: {e}")
             traceback.print_exc()
             return jsonify({"error": f"Pipeline analysis failed: {str(e)}"}), 500
 
         face_list = pipeline_result["faces"]
-        
-        # Calculate outside_fraction properly using face boxes
+
+        # ── Calculate outside_fraction from the RAW heatmap ────────────
         if mask is not None and face_list:
-            face_mask = np.zeros(mask.shape, dtype=bool)
+            img_w, img_h = image.size
+            face_box_mask = np.zeros((img_h, img_w), dtype=bool)
             for f in face_list:
                 x1, y1, x2, y2 = f["box"]
-                face_mask[y1:y2, x1:x2] = True
-            
+                face_box_mask[y1:y2, x1:x2] = True
             total_att = mask.sum()
             if total_att > 1e-8:
-                outside_fraction = float(mask[~face_mask].sum() / total_att)
+                outside_fraction = float(mask[~face_box_mask].sum() / total_att)
+            logger.info("outside_fraction = %.3f", outside_fraction)
+
+        # ── Apply soft face-region bias to heatmap for VISUALIZATION ───
+        # This multiplies the raw heatmap by a Gaussian-blurred face-region
+        # mask so the overlay naturally emphasizes face regions.  The floor
+        # of 0.15 keeps background signals faintly visible so the user can
+        # still see where the model looked outside the face.
+        if mask is not None and face_list:
+            img_w, img_h = image.size
+            face_bias = np.full((img_h, img_w), 0.15, dtype=np.float32)
+            for f in face_list:
+                x1, y1, x2, y2 = f["box"]
+                # Expand face box by 20% on each side for a generous region
+                bw, bh = x2 - x1, y2 - y1
+                pad_x, pad_y = int(bw * 0.20), int(bh * 0.20)
+                ex1 = max(0, x1 - pad_x)
+                ey1 = max(0, y1 - pad_y)
+                ex2 = min(img_w, x2 + pad_x)
+                ey2 = min(img_h, y2 + pad_y)
+                face_bias[ey1:ey2, ex1:ex2] = 1.0
+            # Gaussian blur for smooth falloff from face → background
+            ksize = max(31, int(min(img_w, img_h) * 0.15) | 1)  # odd kernel
+            face_bias = cv2.GaussianBlur(face_bias, (ksize, ksize), 0)
+            # Apply bias and re-normalise
+            mask = mask * face_bias
+            mask = (mask - mask.min()) / (mask.max() - mask.min() + 1e-8)
+            logger.info("Face-biased heatmap: face_bias range [%.2f, %.2f]",
+                        face_bias.min(), face_bias.max())
 
         overlay = None
         heatmap_url = None

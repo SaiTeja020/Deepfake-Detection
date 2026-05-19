@@ -246,7 +246,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       </header>
 
       <div className="grid lg:grid-cols-2 gap-12 items-stretch">
-        <div className="space-y-8">
+        <div className={`space-y-8 w-full ${!result ? 'max-w-md mx-auto lg:max-w-none' : 'max-w-md mx-auto lg:max-w-none lg:mx-0'}`}>
           <div className="relative group">
             <div
               onClick={() => !image && fileInputRef.current?.click()}
@@ -363,7 +363,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
           {/* Fill void below button when no result */}
           {!result && image && !isDetecting && (
-            <div className={`rounded-2xl border p-6 space-y-4 ${isDark ? 'bg-zinc-900/20 border-zinc-800' : 'bg-slate-50 border-slate-100'}`}>
+            <div className={`rounded-2xl border p-6 space-y-4 ${isDark ? 'bg-zinc-900/20 border-zinc-800' : 'bg-slate-50 border-slate-100'} hidden lg:block`}>
               <p className={`text-[9px] font-bold uppercase tracking-widest ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Analysis will include</p>
               {[
                 { icon: '🔍', label: 'Multi-face MTCNN detection' },
@@ -380,7 +380,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
             </div>
           )}
           {!image && (
-            <div className={`rounded-2xl border p-6 space-y-3 ${isDark ? 'bg-zinc-900/20 border-zinc-800' : 'bg-slate-50 border-slate-100'}`}>
+            <div className={`rounded-2xl border p-6 space-y-3 ${isDark ? 'bg-zinc-900/20 border-zinc-800' : 'bg-slate-50 border-slate-100'} hidden lg:block`}>
               <p className={`text-[9px] font-bold uppercase tracking-widest ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Supported inputs</p>
               {['JPG / JPEG portrait', 'PNG face image', 'WEBP photo', 'Max recommended: 5 MB'].map((tip, i) => (
                 <div key={i} className="flex items-center gap-2">
@@ -392,7 +392,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
           )}
         </div>
 
-        <div className={`card-foresight p-10 min-h-[500px] flex flex-col`}>
+        <div className={`card-foresight p-10 min-h-[500px] flex-col w-full max-w-2xl mx-auto lg:max-w-none ${result ? 'flex' : 'hidden lg:flex'}`}>
           {result ? (() => {
             // Derive a safe display percentage.
             // Guard: backend sends a [0,1] fraction if the conversion was skipped.
@@ -403,140 +403,140 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
               : parseFloat((result.confidence * 100).toFixed(2));
 
             return (
-            <div className="space-y-12 animate-in fade-in duration-700">
-              <div className="flex items-center justify-between">
-                <h3 className="text-[11px] font-bold uppercase tracking-[0.3em] text-blue-600 heading-font">Forensic Verdict</h3>
-                <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${
-                  result.prediction === 'Deepfake' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]'
-                  : result.prediction === 'Suspicious' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
-                  : result.prediction === 'Uncertain' ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
-                  : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                }`}>
-                  {result.prediction} IDENTIFIED
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                <div className="flex items-end justify-between">
-                  <div>
-                    <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>Confidence Spectrum</p>
-                    <p className="text-5xl font-black tracking-tighter heading-font">{confidencePct}%</p>
-                  </div>
-                  <div className="text-right">
-                    <p className={`text-[10px] font-mono mb-1 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Inference Mean</p>
-                    <p className="text-sm font-bold font-mono tracking-tight text-blue-500/70">{result.inferenceTime}ms</p>
+              <div className="space-y-12 animate-in fade-in duration-700">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-[11px] font-bold uppercase tracking-[0.3em] text-blue-600 heading-font">Forensic Verdict</h3>
+                  <div className={`px-5 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest ${
+                    result.prediction === 'Deepfake' ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]'
+                    : result.prediction === 'Suspicious' ? 'bg-amber-500/10 text-amber-500 border border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                    : result.prediction === 'Uncertain' ? 'bg-zinc-500/10 text-zinc-500 border border-zinc-500/20'
+                    : 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                  }`}>
+                    {result.prediction} IDENTIFIED
                   </div>
                 </div>
-                <div className={`h-2.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-zinc-950' : 'bg-slate-100'}`}>
-                  <div
-                    className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
-                      result.prediction === 'Deepfake' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
-                      : result.prediction === 'Suspicious' ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
-                      : result.prediction === 'Uncertain' ? 'bg-zinc-500'
-                      : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
-                    }`}
-                    style={{ width: `${confidencePct}%` }}
-                  />
-                </div>
-              </div>
 
-              <div className="space-y-6 pt-10 border-t border-zinc-900/10">
-                <h4 className="text-xs font-bold uppercase tracking-widest heading-font">Forensic Analysis</h4>
-
-                {/* Summary / Explanation */}
-                <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
-                  <p className={`text-sm leading-relaxed font-light ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                    {result.structured_explanation?.summary
-                      || result.explanation?.trim()
-                      || `The ${selectedModel} Architecture identifies ${result.prediction === 'Fake'
-                          ? 'anomalous local variations in facial textures and pixel-level artifacts consistent with generative models'
-                          : 'statistically significant biological patterns and consistent lighting transitions across the detected face mesh'}.`
-                    }
-                  </p>
-                </div>
-
-                {/* Region Badges */}
-                {result.structured_explanation?.regions_examined && result.structured_explanation.regions_examined.length > 0 && (
-                  <div className="flex flex-wrap gap-2">
-                    <span className={`text-[9px] font-bold uppercase tracking-widest self-center ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Regions:</span>
-                    {result.structured_explanation.regions_examined.map((region, idx) => (
-                      <span
-                        key={idx}
-                        className={`px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider border ${
-                          isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600'
-                        }`}
-                      >
-                        {region.replace(/_/g, ' ')}
-                      </span>
-                    ))}
+                <div className="space-y-6">
+                  <div className="flex items-end justify-between">
+                    <div>
+                      <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>Confidence Spectrum</p>
+                      <p className="text-5xl font-black tracking-tighter heading-font">{confidencePct}%</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={`text-[10px] font-mono mb-1 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Inference Mean</p>
+                      <p className="text-sm font-bold font-mono tracking-tight text-blue-500/70">{result.inferenceTime}ms</p>
+                    </div>
                   </div>
-                )}
+                  <div className={`h-2.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-zinc-950' : 'bg-slate-100'}`}>
+                    <div
+                      className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
+                        result.prediction === 'Deepfake' ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
+                        : result.prediction === 'Suspicious' ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
+                        : result.prediction === 'Uncertain' ? 'bg-zinc-500'
+                        : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+                      }`}
+                      style={{ width: `${confidencePct}%` }}
+                    />
+                  </div>
+                </div>
 
-                {/* Primary Findings */}
-                {result.structured_explanation?.primary_findings && result.structured_explanation.primary_findings.length > 0 && (
+                <div className="space-y-6 pt-10 border-t border-zinc-900/10">
+                  <h4 className="text-xs font-bold uppercase tracking-widest heading-font">Forensic Analysis</h4>
+
+                  {/* Summary / Explanation */}
                   <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Primary Findings</p>
-                    <ul className="text-xs space-y-2.5 font-medium">
-                      {result.structured_explanation.primary_findings.map((finding, idx) => (
-                        <li key={idx} className="flex items-start space-x-2.5">
-                          <div className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${
-                            result.prediction === 'Fake' ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.4)]'
-                            : result.prediction === 'Suspicious' ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)]'
-                            : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]'
-                          }`} />
-                          <span className={isDark ? 'text-zinc-300' : 'text-slate-700'}>{finding}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Secondary Signals */}
-                  <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">
-                      {result.structured_explanation ? 'Secondary Signals' : 'Suspicious Domains'}
+                    <p className={`text-sm leading-relaxed font-light ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
+                      {result.structured_explanation?.summary
+                        || result.explanation?.trim()
+                        || `The ${selectedModel} Architecture identifies ${result.prediction === 'Fake'
+                            ? 'anomalous local variations in facial textures and pixel-level artifacts consistent with generative models'
+                            : 'statistically significant biological patterns and consistent lighting transitions across the detected face mesh'}.`
+                      }
                     </p>
-                    <ul className="text-xs space-y-2 font-medium">
-                      {(result.structured_explanation?.secondary_signals && result.structured_explanation.secondary_signals.length > 0
-                        ? result.structured_explanation.secondary_signals
-                        : result.suspicious_domains && result.suspicious_domains.length > 0
-                          ? result.suspicious_domains
-                          : result.prediction === 'Fake'
-                            ? ['Periorbital margin', 'Mandibular texture']
-                            : ['Natural eye geometry', 'Consistent skin tone']
-                      ).map((item, idx) => (
-                        <li key={idx} className="flex items-center space-x-2">
-                          <div className={`w-1.5 h-1.5 rounded-full opacity-60 ${result.prediction === 'Fake' ? 'bg-rose-500' : result.prediction === 'Suspicious' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
-                          <span className="opacity-80">{item}</span>
-                        </li>
-                      ))}
-                    </ul>
                   </div>
 
-                  {/* Confidence Explanation / Model Consensus */}
-                  <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
-                    {result.structured_explanation?.confidence_explanation ? (
-                      <>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Confidence Notes</p>
-                        <p className={`text-xs leading-snug mb-4 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
-                          {result.structured_explanation.confidence_explanation}
-                        </p>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-2">Model Consensus</p>
-                        <p className="text-xs italic leading-snug opacity-70">
-                          {result.structured_explanation.model_consensus || result.model_consensus?.trim() || (selectedModel === ModelType.ViT ? 'Global feature correlation analysis verified via forensic protocol.' : 'Shifted window patch hierarchy verified via forensic protocol.')}
-                        </p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Model Consensus</p>
-                        <p className="text-xs italic leading-snug opacity-70">{result.model_consensus?.trim() || (selectedModel === ModelType.ViT ? 'Global feature correlation analysis verified via forensic protocol.' : 'Shifted window patch hierarchy verified via forensic protocol.')}</p>
-                      </>
-                    )}
+                  {/* Region Badges */}
+                  {result.structured_explanation?.regions_examined && result.structured_explanation.regions_examined.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`text-[9px] font-bold uppercase tracking-widest self-center ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>Regions:</span>
+                      {result.structured_explanation.regions_examined.map((region, idx) => (
+                        <span
+                          key={idx}
+                          className={`px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider border ${
+                            isDark ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600'
+                          }`}
+                        >
+                          {region.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Primary Findings */}
+                  {result.structured_explanation?.primary_findings && result.structured_explanation.primary_findings.length > 0 && (
+                    <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Primary Findings</p>
+                      <ul className="text-xs space-y-2.5 font-medium">
+                        {result.structured_explanation.primary_findings.map((finding, idx) => (
+                          <li key={idx} className="flex items-start space-x-2.5">
+                            <div className={`w-2 h-2 rounded-full mt-1 flex-shrink-0 ${
+                              result.prediction === 'Fake' ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.4)]'
+                              : result.prediction === 'Suspicious' ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)]'
+                              : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]'
+                            }`} />
+                            <span className={isDark ? 'text-zinc-300' : 'text-slate-700'}>{finding}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Secondary Signals */}
+                    <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">
+                        {result.structured_explanation ? 'Secondary Signals' : 'Suspicious Domains'}
+                      </p>
+                      <ul className="text-xs space-y-2 font-medium">
+                        {(result.structured_explanation?.secondary_signals && result.structured_explanation.secondary_signals.length > 0
+                          ? result.structured_explanation.secondary_signals
+                          : result.suspicious_domains && result.suspicious_domains.length > 0
+                            ? result.suspicious_domains
+                            : result.prediction === 'Fake'
+                              ? ['Periorbital margin', 'Mandibular texture']
+                              : ['Natural eye geometry', 'Consistent skin tone']
+                        ).map((item, idx) => (
+                          <li key={idx} className="flex items-center space-x-2">
+                            <div className={`w-1.5 h-1.5 rounded-full opacity-60 ${result.prediction === 'Fake' ? 'bg-rose-500' : result.prediction === 'Suspicious' ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                            <span className="opacity-80">{item}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    {/* Confidence Explanation / Model Consensus */}
+                    <div className={`p-6 rounded-2xl border ${isDark ? 'bg-zinc-950/40 border-zinc-800' : 'bg-slate-50/50 border-slate-100'}`}>
+                      {result.structured_explanation?.confidence_explanation ? (
+                        <>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Confidence Notes</p>
+                          <p className={`text-xs leading-snug mb-4 ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
+                            {result.structured_explanation.confidence_explanation}
+                          </p>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-2">Model Consensus</p>
+                          <p className="text-xs italic leading-snug opacity-70">
+                            {result.structured_explanation.model_consensus || result.model_consensus?.trim() || (selectedModel === ModelType.ViT ? 'Global feature correlation analysis verified via forensic protocol.' : 'Shifted window patch hierarchy verified via forensic protocol.')}
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 mb-3">Model Consensus</p>
+                          <p className="text-xs italic leading-snug opacity-70">{result.model_consensus?.trim() || (selectedModel === ModelType.ViT ? 'Global feature correlation analysis verified via forensic protocol.' : 'Shifted window patch hierarchy verified via forensic protocol.')}</p>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
             );
           })() : (
             <div className="flex-1 flex flex-col items-center justify-center text-center opacity-20">
