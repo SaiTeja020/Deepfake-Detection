@@ -12,6 +12,52 @@ import { auth } from "../firebase";
 import { syncUser } from "../services/api";
 import NeuralMesh from '../components/NeuralMesh';
 
+const calculatePasswordStrength = (password: string) => {
+    let score = 0;
+
+    const checks = {
+        length: password.length >= 8,
+        uppercase: /[A-Z]/.test(password),
+        lowercase: /[a-z]/.test(password),
+        number: /\d/.test(password),
+        special: /[^A-Za-z0-9]/.test(password),
+    };
+
+    Object.values(checks).forEach(v => {
+        if (v) score++;
+    });
+
+    let label = "Very Weak";
+    let color = "bg-red-500";
+
+    if (score >= 2) {
+        label = "Weak";
+        color = "bg-orange-500";
+    }
+
+    if (score >= 3) {
+        label = "Medium";
+        color = "bg-yellow-500";
+    }
+
+    if (score >= 4) {
+        label = "Strong";
+        color = "bg-emerald-500";
+    }
+
+    if (score === 5) {
+        label = "Very Strong";
+        color = "bg-green-500";
+    }
+
+    return {
+        score,
+        label,
+        color,
+        checks
+    };
+};
+
 const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     const navigate = useNavigate();
     const isDark = theme === 'dark';
@@ -24,10 +70,18 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     });
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const passwordAnalysis = calculatePasswordStrength(formData.password);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
+
+        if (passwordAnalysis.score < 3) {
+            setError(
+                "Password is too weak. Please use uppercase, lowercase, numbers and special characters."
+            );
+            return;
+        }
 
         if (formData.password !== formData.confirmPassword) {
             setError("Passwords do not match.");
@@ -175,6 +229,7 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
                                         <label className="auth-label">Password</label>
+
                                         <div className="auth-input-container">
                                             <LockClosedIcon className="auth-input-icon" />
                                             <input
@@ -186,7 +241,61 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                             />
                                         </div>
+
+                                        {/* PASSWORD STRENGTH SECTION */}
+                                        <div className="mt-3 space-y-3">
+
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-[10px] uppercase tracking-widest opacity-60">
+                                                    Password Strength
+                                                </span>
+
+                                                <span
+                                                    className={`text-[10px] font-bold uppercase tracking-wider ${passwordAnalysis.score >= 4
+                                                            ? "text-emerald-500"
+                                                            : passwordAnalysis.score >= 3
+                                                                ? "text-yellow-500"
+                                                                : "text-rose-500"
+                                                        }`}
+                                                >
+                                                    {passwordAnalysis.label}
+                                                </span>
+                                            </div>
+
+                                            <div className="h-2 rounded-full bg-zinc-800/20 overflow-hidden">
+                                                <motion.div
+                                                    animate={{
+                                                        width: `${passwordAnalysis.score * 20}%`
+                                                    }}
+                                                    transition={{ duration: 0.3 }}
+                                                    className={`h-full ${passwordAnalysis.color}`}
+                                                />
+                                            </div>
+
+                                            <div className="grid gap-1 text-[11px]">
+                                                <div className={passwordAnalysis.checks.length ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.length ? "✓" : "○"} Minimum 8 characters
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.uppercase ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.uppercase ? "✓" : "○"} Uppercase letter
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.lowercase ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.lowercase ? "✓" : "○"} Lowercase letter
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.number ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.number ? "✓" : "○"} Number
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.special ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.special ? "✓" : "○"} Special character
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
+
                                     <div className="space-y-1.5">
                                         <label className="auth-label">Confirm</label>
                                         <div className="auth-input-container">

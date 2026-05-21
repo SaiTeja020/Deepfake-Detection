@@ -91,6 +91,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
   const [error, setError] = useState<string | null>(null);
   const [zoomedImage, setZoomedImage] = useState<{ url: string; model: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const MAX_COMPARE_IMAGE_SIZE_MB = 1;
 
   const handleReset = () => {
     if (isDetecting) return;
@@ -107,6 +108,18 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+
+    if (!file) return;
+
+    const fileSizeMB = file.size / (1024 * 1024);
+
+    if (fileSizeMB > MAX_COMPARE_IMAGE_SIZE_MB) {
+      setError(
+        `Selected image is ${fileSizeMB.toFixed(2)} MB. Maximum allowed size is ${MAX_COMPARE_IMAGE_SIZE_MB} MB.`
+      );
+      return;
+    }
+
     if (file) {
       if (!file.type.startsWith('image/')) {
         alert("Please upload a portrait image.");
@@ -220,7 +233,6 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
           >
             {isDetecting ? 'Running Analysis...' : 'Run Benchmarks'}
           </button>
-          {error && <p className="text-rose-500 text-xs font-medium">{error}</p>}
         </div>
       </header>
 
@@ -271,6 +283,15 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
             </p>
           </div>
         </div>
+
+        {/* Upload Error */}
+        {error && (
+          <div className="mt-3 text-left animate-in fade-in duration-300">
+            <p className="text-rose-500 text-xs font-medium">
+              {error}
+            </p>
+          </div>
+        )}
 
         <div className="grid md:grid-cols-2 gap-8">
           <ModelResult title="Vision Transformer" modelName="ViT" result={vitResult} />
@@ -383,7 +404,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
         )}
       </AnimatePresence>
     </div>
-    </div>
+  </div>
   );
 };
 
