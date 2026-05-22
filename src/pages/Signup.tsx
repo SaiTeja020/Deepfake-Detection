@@ -6,13 +6,57 @@ import {
     UserIcon,
     EnvelopeIcon,
     LockClosedIcon,
-    ShieldCheckIcon,
     ArrowRightIcon,
-    SparklesIcon
 } from '@heroicons/react/24/outline';
 import { auth } from "../firebase";
 import { syncUser } from "../services/api";
 import NeuralMesh from '../components/NeuralMesh';
+
+const calculatePasswordStrength = (password: string) => {
+    let score = 0;
+
+    const checks = {
+        length: password.length >= 8,
+        uppercase: /[A-Z]/.test(password),
+        lowercase: /[a-z]/.test(password),
+        number: /\d/.test(password),
+        special: /[^A-Za-z0-9]/.test(password),
+    };
+
+    Object.values(checks).forEach(v => {
+        if (v) score++;
+    });
+
+    let label = "Very Weak";
+    let color = "bg-red-500";
+
+    if (score >= 2) {
+        label = "Weak";
+        color = "bg-orange-500";
+    }
+
+    if (score >= 3) {
+        label = "Medium";
+        color = "bg-yellow-500";
+    }
+
+    if (score >= 4) {
+        label = "Strong";
+        color = "bg-emerald-500";
+    }
+
+    if (score === 5) {
+        label = "Very Strong";
+        color = "bg-green-500";
+    }
+
+    return {
+        score,
+        label,
+        color,
+        checks
+    };
+};
 
 const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     const navigate = useNavigate();
@@ -26,10 +70,18 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     });
     const [error, setError] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const passwordAnalysis = calculatePasswordStrength(formData.password);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
+
+        if (passwordAnalysis.score < 3) {
+            setError(
+                "Password is too weak. Please use uppercase, lowercase, numbers and special characters."
+            );
+            return;
+        }
 
         if (formData.password !== formData.confirmPassword) {
             setError("Passwords do not match.");
@@ -67,46 +119,38 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         }
     };
 
-    const inputStyles = `w-full pl-12 pr-4 py-4 rounded-2xl border outline-none transition-all text-sm
-    ${isDark
-            ? 'bg-zinc-950/30 border-zinc-800 text-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'
-            : 'bg-white/50 border-slate-200 text-slate-900 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5'}`;
-
-    const labelStyles = `text-[10px] font-bold uppercase tracking-[0.2em] ml-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`;
-
     return (
-        <div className={`min-h-screen w-full flex items-center justify-center p-4 sm:p-8 transition-colors duration-500 ${isDark ? 'bg-[#050505]' : 'bg-slate-50'}`}>
+        <div className="auth-container">
 
             {/* Animated Mesh Background */}
             <NeuralMesh isDark={isDark} />
 
             {/* Dynamic Mesh Gradient Background */}
             <div className="fixed inset-0 overflow-hidden pointer-events-none">
-                <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full blur-[120px] opacity-15 ${isDark ? 'bg-blue-600' : 'bg-blue-200'}`} />
-                <div className={`absolute -top-[5%] -right-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-purple-600' : 'bg-purple-200'}`} />
-                <div className={`absolute -bottom-[10%] -left-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
+                <div className="auth-ambient-glow-1" />
+                <div className="auth-ambient-glow-2" />
+                <div className="auth-ambient-glow-3" />
             </div>
 
             <motion.div
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className={`relative w-full max-w-2xl overflow-hidden rounded-[2.5rem] border backdrop-blur-lg shadow-[0_20px_50px_rgba(0,0,0,0.1)] 
-          ${isDark ? 'bg-zinc-900/40 border-white/10' : 'bg-white/70 border-white shadow-slate-200/50'}`}
+                className="auth-card auth-card-wide"
             >
                 <div className="flex flex-col md:flex-row">
                     {/* Left Side: Branding/Value Prop */}
-                    <div className={`hidden md:flex md:w-2/5 p-12 flex-col justify-between border-r ${isDark ? 'border-white/5 bg-white/5' : 'border-slate-100 bg-slate-50/50'}`}>
+                    <div className="auth-split-left">
                         <div className="space-y-4">
                             <img src="/src/assets/logo.svg" alt="Foresight Logo" className="w-7 h-7" />
-                            <h1 className={`text-2xl font-bold leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                            <h1 className="auth-split-title">
                                 Expose the synthetic. <br />Protect the truth.
                             </h1>
-                            <p className={`text-sm leading-relaxed ${isDark ? 'text-zinc-400' : 'text-slate-500'}`}>
+                            <p className="auth-split-desc">
                                 Deploying Transformers to detect subtle artifacts in facial geometry and temporal inconsistencies that the human eye misses.
                             </p>
 
                             {/* Tech Specs List - Adds "Modern" flavor */}
-                            <ul className={`text-[11px] space-y-2 font-mono ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
+                            <ul className="auth-tech-list">
                                 <li className="flex items-center">
                                     <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-2" />
                                     Multi-Head Attention Analysis
@@ -122,8 +166,8 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                             </ul>
                         </div>
 
-                        <div className={`p-4 rounded-2xl border ${isDark ? 'bg-zinc-950/50 border-white/5' : 'bg-white border-slate-200 shadow-sm'}`}>
-                            <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="auth-progress-container">
+                            <div className="h-1 w-full bg-zinc-800/20 dark:bg-zinc-800 rounded-full overflow-hidden">
                                 <motion.div
                                     initial={{ width: 0 }}
                                     animate={{ width: "99.4%" }}
@@ -135,10 +179,10 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                     </div>
 
                     {/* Right Side: Form */}
-                    <div className="flex-1 p-8 sm:p-12">
+                    <div className="auth-split-right">
                         <header className="mb-8">
-                            <h2 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-slate-900'}`}>Create Account</h2>
-                            <p className={`text-sm mt-1 ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Start your 14-day clearance trial.</p>
+                            <h2 className="auth-title">Create Account</h2>
+                            <p className="auth-subtitle">Start your 14-day clearance trial.</p>
                         </header>
 
                         <form onSubmit={handleSubmit} className="space-y-4">
@@ -146,20 +190,20 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                 <motion.div
                                     initial={{ opacity: 0, height: 0 }}
                                     animate={{ opacity: 1, height: 'auto' }}
-                                    className={`p-4 rounded-xl text-xs font-medium border ${isDark ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-rose-50 border-rose-200 text-rose-600'}`}
+                                    className="auth-error"
                                 >
                                     {error}
                                 </motion.div>
                             )}
                             <div className="grid grid-cols-1 gap-4">
                                 <div className="space-y-1.5">
-                                    <label className={labelStyles}>Full Name</label>
-                                    <div className="relative">
-                                        <UserIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                                    <label className="auth-label">Full Name</label>
+                                    <div className="auth-input-container">
+                                        <UserIcon className="auth-input-icon" />
                                         <input
                                             type="text"
                                             required
-                                            className={inputStyles}
+                                            className="auth-input"
                                             placeholder="John Doe"
                                             value={formData.fullName}
                                             onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
@@ -168,13 +212,13 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className={labelStyles}>Work Email</label>
-                                    <div className="relative">
-                                        <EnvelopeIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                                    <label className="auth-label">Work Email</label>
+                                    <div className="auth-input-container">
+                                        <EnvelopeIcon className="auth-input-icon" />
                                         <input
                                             type="email"
                                             required
-                                            className={inputStyles}
+                                            className="auth-input"
                                             placeholder="name@agency.gov"
                                             value={formData.email}
                                             onChange={(e) => setFormData({ ...formData, email: e.target.value })}
@@ -184,27 +228,82 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                     <div className="space-y-1.5">
-                                        <label className={labelStyles}>Password</label>
-                                        <div className="relative">
-                                            <LockClosedIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                                        <label className="auth-label">Password</label>
+
+                                        <div className="auth-input-container">
+                                            <LockClosedIcon className="auth-input-icon" />
                                             <input
                                                 type="password"
                                                 required
-                                                className={inputStyles}
+                                                className="auth-input"
                                                 placeholder="••••••••"
                                                 value={formData.password}
                                                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                             />
                                         </div>
+
+                                        {/* PASSWORD STRENGTH SECTION */}
+                                        <div className="mt-3 space-y-3">
+
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-[10px] uppercase tracking-widest opacity-60">
+                                                    Password Strength
+                                                </span>
+
+                                                <span
+                                                    className={`text-[10px] font-bold uppercase tracking-wider ${passwordAnalysis.score >= 4
+                                                            ? "text-emerald-500"
+                                                            : passwordAnalysis.score >= 3
+                                                                ? "text-yellow-500"
+                                                                : "text-rose-500"
+                                                        }`}
+                                                >
+                                                    {passwordAnalysis.label}
+                                                </span>
+                                            </div>
+
+                                            <div className="h-2 rounded-full bg-zinc-800/20 overflow-hidden">
+                                                <motion.div
+                                                    animate={{
+                                                        width: `${passwordAnalysis.score * 20}%`
+                                                    }}
+                                                    transition={{ duration: 0.3 }}
+                                                    className={`h-full ${passwordAnalysis.color}`}
+                                                />
+                                            </div>
+
+                                            <div className="grid gap-1 text-[11px]">
+                                                <div className={passwordAnalysis.checks.length ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.length ? "✓" : "○"} Minimum 8 characters
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.uppercase ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.uppercase ? "✓" : "○"} Uppercase letter
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.lowercase ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.lowercase ? "✓" : "○"} Lowercase letter
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.number ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.number ? "✓" : "○"} Number
+                                                </div>
+
+                                                <div className={passwordAnalysis.checks.special ? "text-emerald-500" : "opacity-50"}>
+                                                    {passwordAnalysis.checks.special ? "✓" : "○"} Special character
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
+
                                     <div className="space-y-1.5">
-                                        <label className={labelStyles}>Confirm</label>
-                                        <div className="relative">
-                                            <LockClosedIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+                                        <label className="auth-label">Confirm</label>
+                                        <div className="auth-input-container">
+                                            <LockClosedIcon className="auth-input-icon" />
                                             <input
                                                 type="password"
                                                 required
-                                                className={inputStyles}
+                                                className="auth-input"
                                                 placeholder="••••••••"
                                                 value={formData.confirmPassword}
                                                 onChange={(e) => setFormData({ ...formData, confirmPassword: e.target.value })}
@@ -219,14 +318,14 @@ const Signup: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                                 whileTap={{ scale: 0.98 }}
                                 type="submit"
                                 disabled={isLoading}
-                                className={`w-full py-4 mt-6 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-2 ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+                                className={`auth-btn-primary ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
                             >
                                 <span>{isLoading ? 'Processing...' : 'Create Identity'}</span>
                                 {!isLoading && <ArrowRightIcon className="w-4 h-4" />}
                             </motion.button>
                         </form>
 
-                        <p className={`mt-8 text-center text-xs ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+                        <p className="mt-8 text-center text-xs text-slate-500 dark:text-zinc-500">
                             Already have an account?{'  '}
                             <Link to="/login" className="text-blue-500 font-bold hover:underline">Sign In</Link>
                         </p>

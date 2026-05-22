@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence, useSpring} from 'framer-motion';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import {
   EnvelopeIcon,
@@ -10,6 +10,76 @@ import {
 import { auth } from '../firebase';
 import { syncUser } from '../services/api';
 import NeuralMesh from '../components/NeuralMesh';
+
+const useMousePosition = () => {
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const updateMousePosition = (e: MouseEvent) => {
+      setMousePosition({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener('mousemove', updateMousePosition);
+    return () => window.removeEventListener('mousemove', updateMousePosition);
+  }, []);
+
+  return mousePosition;
+};
+
+const CustomCursor = ({ isDark }: { isDark: boolean }) => {
+  const { x, y } = useMousePosition();
+  const cursorX = useSpring(0, { damping: 25, stiffness: 300 });
+  const cursorY = useSpring(0, { damping: 25, stiffness: 300 });
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      cursorX.set(e.clientX);
+      cursorY.set(e.clientY);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [cursorX, cursorY]);
+
+  return (
+    <motion.div
+      className="fixed top-0 left-0 z-[9999] pointer-events-none hidden lg:block"
+      style={{
+        x: cursorX,
+        y: cursorY,
+        translateX: '-50%',
+        translateY: '-50%',
+      }}
+    >
+      <div className="relative flex items-center justify-center">
+        {/* Crosshair lines */}
+        <div className="absolute h-8 w-[1px] bg-blue-500/40" />
+        <div className="absolute w-8 h-[1px] bg-blue-500/40" />
+
+        {/* Corner brackets */}
+        <div className="absolute -top-4 -left-4 h-2 w-2 border-t border-l border-blue-500" />
+        <div className="absolute -top-4 -right-4 h-2 w-2 border-t border-r border-blue-500" />
+        <div className="absolute -bottom-4 -left-4 h-2 w-2 border-b border-l border-blue-500" />
+        <div className="absolute -bottom-4 -right-4 h-2 w-2 border-b border-r border-blue-500" />
+
+        {/* Center dot */}
+        <div className="h-1 w-1 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.8)]" />
+
+        {/* Scanning ring */}
+        <motion.div
+          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="absolute h-10 w-10 rounded-full border border-blue-500/20"
+        />
+
+        {/* Coordinates */}
+        <div className="absolute top-6 left-6 flex flex-col font-mono text-[7px] uppercase tracking-[0.2em] text-blue-500/60">
+          <span>LAT: {((y / window.innerHeight) * 180 - 90).toFixed(4)}</span>
+          <span>LNG: {((x / window.innerWidth) * 360 - 180).toFixed(4)}</span>
+          <span className="mt-1 text-blue-500/30">SCANNING_ACTIVE</span>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
 
 const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ theme, onLogin }) => {
   const navigate = useNavigate();
@@ -24,8 +94,7 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
     setIsLoading(true);
     setError(null);
     try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-
+      await signInWithEmailAndPassword(auth, email, password);
       if (onLogin) onLogin();
       navigate('/product');
     } catch (err: any) {
@@ -37,24 +106,25 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
   };
 
   return (
-    <div className={`min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 transition-colors duration-500 ${isDark ? 'bg-[#050505]' : 'bg-slate-50'}`}>
+    <div>
+    <CustomCursor isDark={isDark} />
+    <div className="auth-container">
 
       {/* Animated Mesh Background */}
       <NeuralMesh isDark={isDark} />
 
       {/* Background Ambient Glows */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className={`absolute -top-[10%] -left-[10%] w-[40%] h-[40%] rounded-full blur-[120px] opacity-15 ${isDark ? 'bg-blue-600' : 'bg-blue-200'}`} />
-        <div className={`absolute -top-[5%] -right-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-purple-600' : 'bg-purple-200'}`} />
-        <div className={`absolute -bottom-[10%] -left-[5%] w-[30%] h-[30%] rounded-full blur-[100px] opacity-10 ${isDark ? 'bg-indigo-600' : 'bg-indigo-200'}`} />
+        <div className="auth-ambient-glow-1" />
+        <div className="auth-ambient-glow-2" />
+        <div className="auth-ambient-glow-3" />
       </div>
 
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.6, ease: "easeOut" }}
-        className={`relative w-full max-w-lg overflow-hidden rounded-[2.5rem] border backdrop-blur-lg shadow-[0_20px_50px_rgba(0,0,0,0.1)] 
-          ${isDark ? 'bg-zinc-900/40 border-white/10 shadow-black' : 'bg-white/70 border-white/60 shadow-slate-200/50'}`}
+        className="auth-card"
       >
         {/* Decorative Top Accent */}
         <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-50" />
@@ -63,14 +133,14 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
           <header className="flex flex-col items-center text-center mb-10">
             <motion.div
               whileHover={{ scale: 1.05 }}
-              className={`p-4 rounded-2xl mb-6 shadow-inner ${isDark ? 'bg-zinc-800/50' : 'bg-slate-100'}`}
+              className="auth-logo-container"
             >
               <img src="/src/assets/logo.svg" alt="Logo" className="w-12 h-12 sm:w-16 sm:h-16" />
             </motion.div>
-            <h2 className={`text-3xl font-extrabold tracking-tight mb-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+            <h2 className="auth-title">
               Welcome to Foresight
             </h2>
-            <p className={`text-sm font-medium ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+            <p className="auth-subtitle">
               Sign in to access facial forensics terminal.
             </p>
           </header>
@@ -79,7 +149,7 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: 'auto' }}
-              className={`mb-6 p-4 rounded-xl text-xs font-medium border ${isDark ? 'bg-rose-500/10 border-rose-500/20 text-rose-400' : 'bg-rose-50 border-rose-200 text-rose-600'}`}
+              className="auth-error"
             >
               {error}
             </motion.div>
@@ -87,18 +157,15 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
 
           <form className="space-y-5" onSubmit={handleSubmit}>
             <div className="space-y-1.5">
-              <label className={`text-[10px] font-bold uppercase tracking-[0.2em] ml-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>Identifier</label>
-              <div className="relative">
-                <EnvelopeIcon className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${isDark ? 'text-zinc-600' : 'text-slate-400'}`} />
+              <label className="auth-label ml-1">Identifier</label>
+              <div className="auth-input-container">
+                <EnvelopeIcon className="auth-input-icon" />
                 <input
                   type="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className={`w-full pl-12 pr-4 py-4 rounded-2xl border outline-none transition-all text-sm
-                    ${isDark
-                      ? 'bg-zinc-950/50 border-zinc-800 text-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5'}`}
+                  className="auth-input"
                   placeholder="analyst@foresight.ai"
                 />
               </div>
@@ -106,20 +173,17 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between ml-1">
-                <label className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>Security Key</label>
+                <label className="auth-label">Security Key</label>
                 <button type="button" className="text-[10px] font-bold text-blue-500 hover:text-blue-400 transition-colors uppercase tracking-wider">Reset</button>
               </div>
-              <div className="relative">
-                <LockClosedIcon className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${isDark ? 'text-zinc-600' : 'text-slate-400'}`} />
+              <div className="auth-input-container">
+                <LockClosedIcon className="auth-input-icon" />
                 <input
                   type="password"
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className={`w-full pl-12 pr-4 py-4 rounded-2xl border outline-none transition-all text-sm
-                    ${isDark
-                      ? 'bg-zinc-950/50 border-zinc-800 text-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10'
-                      : 'bg-white border-slate-200 text-slate-900 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/5'}`}
+                  className="auth-input"
                   placeholder="••••••••"
                 />
               </div>
@@ -130,7 +194,7 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
               whileTap={{ scale: 0.98 }}
               type="submit"
               disabled={isLoading}
-              className={`w-full py-4 mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl transition-all shadow-lg shadow-blue-600/30 flex items-center justify-center space-x-3 group ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
+              className={`auth-btn-primary group ${isLoading ? 'opacity-70 cursor-not-allowed' : ''}`}
             >
               <span className="tracking-wide">
                 {isLoading ? 'Processing...' : 'Initialize Session'}
@@ -139,8 +203,8 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
             </motion.button>
           </form>
 
-          <footer className="mt-6 pt-6 border-t border-zinc-500/10 flex justify-center">
-            <p className={`text-xs ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+          <footer className="auth-footer">
+            <p className="auth-footer-text">
               Don't have an account?{"  "}
               <Link
                 to="/signup"
@@ -152,6 +216,7 @@ const Login: React.FC<{ theme: 'dark' | 'light', onLogin?: () => void }> = ({ th
           </footer>
         </div>
       </motion.div>
+    </div>
     </div>
   );
 };

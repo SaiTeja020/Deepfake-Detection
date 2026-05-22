@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence, useSpring } from 'framer-motion';
 import {
    UserCircleIcon,
    ShieldCheckIcon,
@@ -17,6 +18,7 @@ import { ModelType } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { syncUser, uploadProfilePic, getUserProfile, getScanHistory, clearScanHistory } from '../services/api';
 import { auth } from '../firebase';
+import { Link } from 'react-router-dom';
 
 interface EditProfileModalProps {
    isOpen: boolean;
@@ -26,11 +28,86 @@ interface EditProfileModalProps {
    isDark: boolean;
 }
 
+const useMousePosition = () => {
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const updateMousePosition = (e: MouseEvent) => {
+      setMousePosition({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener('mousemove', updateMousePosition);
+    return () => window.removeEventListener('mousemove', updateMousePosition);
+  }, []);
+
+  return mousePosition;
+};
+
+const CustomCursor = ({ isDark }: { isDark: boolean }) => {
+  const { x, y } = useMousePosition();
+  const cursorX = useSpring(0, { damping: 25, stiffness: 300 });
+  const cursorY = useSpring(0, { damping: 25, stiffness: 300 });
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      cursorX.set(e.clientX);
+      cursorY.set(e.clientY);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [cursorX, cursorY]);
+
+  return (
+    <motion.div
+      className="fixed top-0 left-0 z-[9999] pointer-events-none hidden lg:block"
+      style={{
+        x: cursorX,
+        y: cursorY,
+        translateX: '-50%',
+        translateY: '-50%',
+      }}
+    >
+      <div className="relative flex items-center justify-center">
+        {/* Crosshair lines */}
+        <div className="absolute h-8 w-[1px] bg-blue-500/40" />
+        <div className="absolute w-8 h-[1px] bg-blue-500/40" />
+
+        {/* Corner brackets */}
+        <div className="absolute -top-4 -left-4 h-2 w-2 border-t border-l border-blue-500" />
+        <div className="absolute -top-4 -right-4 h-2 w-2 border-t border-r border-blue-500" />
+        <div className="absolute -bottom-4 -left-4 h-2 w-2 border-b border-l border-blue-500" />
+        <div className="absolute -bottom-4 -right-4 h-2 w-2 border-b border-r border-blue-500" />
+
+        {/* Center dot */}
+        <div className="h-1 w-1 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.8)]" />
+
+        {/* Scanning ring */}
+        <motion.div
+          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="absolute h-10 w-10 rounded-full border border-blue-500/20"
+        />
+
+        {/* Coordinates */}
+        <div className="absolute top-6 left-6 flex flex-col font-mono text-[7px] uppercase tracking-[0.2em] text-blue-500/60">
+          <span>LAT: {((y / window.innerHeight) * 180 - 90).toFixed(4)}</span>
+          <span>LNG: {((x / window.innerWidth) * 360 - 180).toFixed(4)}</span>
+          <span className="mt-1 text-blue-500/30">SCANNING_ACTIVE</span>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
 const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, user, onSave, isDark }) => {
    const fileInputRef = useRef<HTMLInputElement>(null);
    const [formData, setFormData] = useState(user);
    const [hasChanges, setHasChanges] = useState(false);
    const [error, setError] = useState<string | null>(null);
+
+   const isNameValid = formData.name.length >= 2;
+   const isUsernameValid = /^[a-zA-Z0-9_]+$/.test(formData.username);
+   const isBioValid = formData.bio.length <= 200;
+   const isFormValid = isNameValid && isUsernameValid && isBioValid;
 
    useEffect(() => {
       setFormData(user);
@@ -86,7 +163,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
       <div className="modal-overlay" onClick={onClose}>
          <div className="modal-content" onClick={e => e.stopPropagation()}>
             <div className={`modal-header p-6 border-b flex items-center justify-between ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
-               <h2 className="text-sm font-black uppercase tracking-[0.2em] heading-font">Edit Analyst Profile</h2>
+               <h2 className="text-sm font-black uppercase tracking-[0.2em] heading-font text-blue-500/70">Edit Analyst Profile</h2>
                <button onClick={onClose} className="p-1 hover:opacity-70 transition-opacity">
                   <XMarkIcon className="w-5 h-5" />
                </button>
@@ -124,6 +201,8 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
                   </div>
                   <div className="text-center">
                      <p className="text-[10px] font-bold uppercase tracking-widest opacity-40">Click to change photo</p>
+                     <p className="text-[10px] font-bold uppercase tracking-widest opacity-40 mt-1">PNG, JPG, WEBP • Maximum 5 MB</p>
+                     <p className="text-[10px] font-bold uppercase tracking-widest opacity-40 mt-0.5">Recommended: Square image (1:1)</p>
                      {error && (
                         <p className="text-[9px] font-bold text-rose-500 mt-2 uppercase tracking-tight">{error}</p>
                      )}
@@ -143,16 +222,18 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
                      <input
                         value={formData.name}
                         onChange={e => setFormData({ ...formData, name: e.target.value })}
-                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'}`}
+                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'} ${!isNameValid ? 'border-rose-500/50 focus:border-rose-500' : ''}`}
                      />
+                     {!isNameValid && <p className="text-[10px] font-bold text-rose-500 uppercase tracking-widest ml-1">Minimum 2 characters</p>}
                   </div>
                   <div className="space-y-2">
                      <label className="text-[10px] font-bold uppercase tracking-widest opacity-50 ml-1">Username</label>
                      <input
                         value={formData.username}
                         onChange={e => setFormData({ ...formData, username: e.target.value })}
-                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'}`}
+                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'} ${!isUsernameValid ? 'border-rose-500/50 focus:border-rose-500' : ''}`}
                      />
+                     {!isUsernameValid && <p className="text-[10px] font-bold text-rose-500 uppercase tracking-widest ml-1">Letters, numbers, and underscores only</p>}
                   </div>
                   <div className="space-y-2">
                      <label className="text-[10px] font-bold uppercase tracking-widest opacity-50 ml-1">Bio</label>
@@ -160,16 +241,20 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({ isOpen, onClose, us
                         value={formData.bio}
                         rows={3}
                         onChange={e => setFormData({ ...formData, bio: e.target.value })}
-                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium resize-none ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'}`}
+                        className={`w-full px-5 py-3 rounded-xl border outline-none transition-all text-sm font-medium resize-none ${isDark ? 'bg-zinc-950 border-zinc-800 focus:border-blue-500/50' : 'bg-white border-slate-200 focus:border-blue-600/50 shadow-sm'} ${!isBioValid ? 'border-rose-500/50 focus:border-rose-500' : ''}`}
                      />
+                     <div className="flex justify-between items-center mt-1">
+                        <span className="text-rose-500 text-[10px] font-bold uppercase tracking-widest">{!isBioValid ? 'Max 200 characters' : ''}</span>
+                        <span className={`text-[10px] font-bold uppercase tracking-widest ml-auto ${isBioValid ? 'opacity-40' : 'text-rose-500'}`}>{formData.bio.length} / 200</span>
+                     </div>
                   </div>
                </div>
             </div>
             <div className={`modal-footer p-6 bg-zinc-50/50 dark:bg-zinc-900/50 border-t flex gap-3 ${isDark ? 'border-zinc-800' : 'border-slate-100'}`}>
                <button
                   onClick={() => onSave(formData)}
-                  disabled={!hasChanges}
-                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all ${hasChanges ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:-translate-y-0.5 active:translate-y-0' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed dark:bg-zinc-800 dark:text-zinc-600'}`}
+                  disabled={!hasChanges || !isFormValid}
+                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-[0.2em] transition-all ${hasChanges && isFormValid ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20 hover:-translate-y-0.5 active:translate-y-0' : 'bg-zinc-200 text-zinc-400 cursor-not-allowed dark:bg-zinc-800 dark:text-zinc-600'}`}
                >
                   Save Changes
                </button>
@@ -189,6 +274,13 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
    const [currentPage, setCurrentPage] = useState(1);
    const ITEMS_PER_PAGE = 10;
    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
+
+   const showToast = (message: string, type: 'success' | 'error') => {
+      setToast({ message, type });
+      setTimeout(() => setToast(null), 3000);
+   };
+
    const [user, setUser] = useState({
       name: 'John Doe',
       username: 'johndoe_foresight',
@@ -293,9 +385,10 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
          }
 
          setIsEditModalOpen(false);
+         showToast('✓ Profile Updated Successfully', 'success');
       } catch (err) {
          console.error("Failed to sync profile:", err);
-         alert("Failed to update profile picture or sync updates.");
+         showToast('Failed to update profile', 'error');
       }
    };
 
@@ -312,7 +405,34 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       }
    };
 
+   // Determine Role
+   let analystRole = 'New Analyst';
+   if (totalAnalyzed >= 200) analystRole = 'Lead Analyst';
+   else if (totalAnalyzed >= 50) analystRole = 'Senior Analyst';
+   else if (totalAnalyzed >= 10) analystRole = 'Analyst';
+
    return (
+      <div>
+         <CustomCursor isDark={isDark} />
+         {/* Toast Notification */}
+         <AnimatePresence>
+            {toast && (
+               <motion.div
+                  initial={{ opacity: 0, y: -20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                  className={`fixed top-8 right-8 z-[9999] px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 border ${isDark ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-slate-200'}`}
+               >
+                  {toast.type === 'success' ? (
+                     <CheckCircleIcon className="w-6 h-6 text-emerald-500" />
+                  ) : (
+                     <XCircleIcon className="w-6 h-6 text-rose-500" />
+                  )}
+                  <span className={`text-sm font-bold tracking-wide ${isDark ? 'text-zinc-100' : 'text-slate-900'}`}>{toast.message}</span>
+               </motion.div>
+            )}
+         </AnimatePresence>
+
       <div className="relative min-h-screen pb-20 overflow-x-hidden">
          {/* Background Ambient Glows */}
          <div className="fixed inset-0 overflow-hidden pointer-events-none">
@@ -345,8 +465,10 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                         {user.bio}
                      </p>
                      <div className="flex flex-wrap justify-center md:justify-start gap-4 pt-2">
-                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isDark ? 'bg-blue-500/5 border-blue-500/20 text-blue-500' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>Senior Analyst</span>
-                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-500' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>Node Verified</span>
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isDark ? 'bg-blue-500/5 border-blue-500/20 text-blue-500' : 'bg-blue-50 border-blue-100 text-blue-600'}`}>{analystRole}</span>
+                        <span className={`px-4 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-widest border ${isDark ? 'bg-zinc-900 border-zinc-800 text-zinc-500' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
+                           {firebaseUser?.emailVerified ? '✓ Verified Account' : 'Verification Pending'}
+                        </span>
                      </div>
                   </div>
                </div>
@@ -413,81 +535,99 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   </div>
                </div>
 
-               <div className={`card-foresight overflow-hidden border-none shadow-none bg-transparent`}>
-                  <div className="overflow-x-auto">
-                     <table className="table-foresight">
-                        <thead>
-                           <tr>
-                              <th>Analysis Date</th>
-                              <th>Image Source</th>
-                              <th>Forensic Model</th>
-                              <th>Verdict</th>
-                              <th>Confidence</th>
-                           </tr>
-                        </thead>
-                        <tbody>
-                           {paginatedHistory.map((row) => (
-                              <tr key={row.id} className="group transition-all duration-300">
-                                 <td className={`font-medium ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{row.date}</td>
-                                 <td className="font-bold tracking-tight text-sm">{row.name}</td>
-                                 <td>
-                                    <span className={`px-3 py-1 rounded-lg text-[10px] font-bold tracking-widest border ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-white border-slate-200'}`}>
-                                       {row.model} PROTOCOL
-                                    </span>
-                                 </td>
-                                 <td>
-                                    <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all group-hover:scale-105 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
-                                       {row.result}
-                                    </div>
-                                 </td>
-                                 <td>
-                                    <div className="flex items-center gap-4">
-                                       <span className="font-mono font-bold text-sm tracking-tighter">{row.confidence}%</span>
-                                       <div className={`h-1.5 w-24 rounded-full overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-slate-100'}`}>
-                                          <div
-                                             className={`h-full rounded-full transition-all duration-1000 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'}`}
-                                             style={{ width: `${row.confidence}%` }}
-                                          />
-                                       </div>
-                                    </div>
-                                 </td>
-                              </tr>
-                           ))}
-                        </tbody>
-                     </table>
-                  </div>
-
-                  {/* Pagination Controls */}
-                  {totalPages > 1 && (
-                     <div className="mt-10 flex items-center justify-center gap-6 border-t border-zinc-900/5 dark:border-white/5 pt-10">
-                        <button
-                           onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                           disabled={currentPage === 1}
-                           className={`p-2.5 rounded-xl border transition-all ${currentPage === 1 
-                              ? 'opacity-20 cursor-not-allowed' 
-                              : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
-                        >
-                           <ChevronLeftIcon className="w-5 h-5" />
-                        </button>
-                        
-                        <div className="flex items-center gap-2">
-                           <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
-                              Page {currentPage} of {totalPages}
-                           </span>
-                        </div>
-
-                        <button
-                           onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                           disabled={currentPage === totalPages}
-                           className={`p-2.5 rounded-xl border transition-all ${currentPage === totalPages 
-                              ? 'opacity-20 cursor-not-allowed' 
-                              : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
-                        >
-                           <ChevronRightIcon className="w-5 h-5" />
-                        </button>
+               {filteredHistory.length === 0 ? (
+                  <div className={`card-foresight border flex flex-col items-center justify-center py-24 text-center transition-all ${isDark ? 'bg-zinc-900/20 border-zinc-900/50' : 'bg-slate-50/50 border-slate-200/50'}`}>
+                     <div className={`p-4 rounded-full mb-6 ${isDark ? 'bg-zinc-900' : 'bg-slate-100'}`}>
+                        <MagnifyingGlassIcon className={`w-8 h-8 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`} />
                      </div>
-                  )}
-               </div>
+                     <h3 className="text-xl font-black heading-font tracking-tight mb-3">No Analysis History Yet</h3>
+                     <p className={`text-sm mb-8 max-w-md ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+                        Run your first deepfake scan to begin building forensic intelligence.
+                     </p>
+                     <Link
+                        to="/product"
+                        className={`px-8 py-3.5 rounded-full text-[11px] font-bold uppercase tracking-widest transition-all duration-300 transform hover:-translate-y-1 active:translate-y-0 ${isDark ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-600/20' : 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg shadow-blue-600/20'}`}
+                     >
+                        Start Analysis
+                     </Link>
+                  </div>
+               ) : (
+                  <div className={`card-foresight overflow-hidden border-none shadow-none bg-transparent`}>
+                     <div className="overflow-x-auto">
+                        <table className="table-foresight">
+                           <thead>
+                              <tr>
+                                 <th>Analysis Date</th>
+                                 <th>Image Source</th>
+                                 <th>Forensic Model</th>
+                                 <th>Verdict</th>
+                                 <th>Confidence</th>
+                              </tr>
+                           </thead>
+                           <tbody>
+                              {paginatedHistory.map((row) => (
+                                 <tr key={row.id} className="group transition-all duration-300">
+                                    <td className={`font-medium ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{row.date}</td>
+                                    <td className="font-bold tracking-tight text-sm">{row.name}</td>
+                                    <td>
+                                       <span className={`px-3 py-1 rounded-lg text-[10px] font-bold tracking-widest border ${isDark ? 'bg-zinc-900/50 border-zinc-800' : 'bg-white border-slate-200'}`}>
+                                          {row.model} PROTOCOL
+                                       </span>
+                                    </td>
+                                    <td>
+                                       <div className={`inline-flex items-center px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest transition-all group-hover:scale-105 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+                                          {row.result}
+                                       </div>
+                                    </td>
+                                    <td>
+                                       <div className="flex items-center gap-4">
+                                          <span className="font-mono font-bold text-sm tracking-tighter">{row.confidence}%</span>
+                                          <div className={`h-1.5 w-24 rounded-full overflow-hidden ${isDark ? 'bg-zinc-900' : 'bg-slate-100'}`}>
+                                             <div
+                                                className={`h-full rounded-full transition-all duration-1000 ${row.result.toLowerCase() === 'fake' ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.4)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]'}`}
+                                                style={{ width: `${row.confidence}%` }}
+                                             />
+                                          </div>
+                                       </div>
+                                    </td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
+                     </div>
+
+                     {/* Pagination Controls */}
+                     {totalPages > 1 && (
+                        <div className="mt-10 flex items-center justify-center gap-6 border-t border-zinc-900/5 dark:border-white/5 pt-10">
+                           <button
+                              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                              disabled={currentPage === 1}
+                              className={`p-2.5 rounded-xl border transition-all ${currentPage === 1 
+                                 ? 'opacity-20 cursor-not-allowed' 
+                                 : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
+                           >
+                              <ChevronLeftIcon className="w-5 h-5" />
+                           </button>
+                           
+                           <div className="flex items-center gap-2">
+                              <span className={`text-[10px] font-black uppercase tracking-[0.2em] ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>
+                                 Page {currentPage} of {totalPages}
+                              </span>
+                           </div>
+
+                           <button
+                              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                              disabled={currentPage === totalPages}
+                              className={`p-2.5 rounded-xl border transition-all ${currentPage === totalPages 
+                                 ? 'opacity-20 cursor-not-allowed' 
+                                 : 'hover:bg-blue-600 hover:text-white hover:border-blue-600 active:scale-95'} ${isDark ? 'border-zinc-800' : 'border-slate-200 bg-white'}`}
+                           >
+                              <ChevronRightIcon className="w-5 h-5" />
+                           </button>
+                        </div>
+                     )}
+                  </div>
+               )}
             </section>
          </div>
 
@@ -498,6 +638,7 @@ const Profile: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
             onSave={handleSaveProfile}
             isDark={isDark}
          />
+      </div>
       </div>
    );
 };

@@ -1,5 +1,6 @@
 import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Link, useLocation, Navigate } from 'react-router-dom';
+import OfflinePage from './pages/OfflinePage.tsx';
 import Landing from './pages/Landing';
 import { useAuth } from './context/AuthContext';
 import { auth } from './firebase';
@@ -192,6 +193,20 @@ const App: React.FC = () => {
   const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
   const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
   const { user, profile, loading } = useAuth();
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+
+  useEffect(() => {
+    const handleOffline = () => setIsOffline(true);
+    const handleOnline = () => setIsOffline(false);
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -255,6 +270,10 @@ const App: React.FC = () => {
         </div>
       </div>
     );
+  }
+
+  if (isOffline) {
+    return <OfflinePage theme={activeTheme} />;
   }
 
   const sidebarCollapsed = isCollapsed && !isHovered;

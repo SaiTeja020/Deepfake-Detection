@@ -1,17 +1,85 @@
-import React, { useState, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useState, useRef, useEffect } from 'react';
+import { motion, AnimatePresence, useSpring } from 'framer-motion';
 import { ModelType, DetectionResult } from '../types';
 import { detectDeepfake } from '../services/api';
 import { auth } from '../firebase';
 import {
   CloudArrowUpIcon,
-  ArrowPathIcon,
-  ArrowsRightLeftIcon,
   SparklesIcon,
   EyeIcon,
-  UserCircleIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline';
+import { HoverCard, HoverCardTrigger, HoverCardContent } from '../components/ui/hover-card';
+
+const useMousePosition = () => {
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const updateMousePosition = (e: MouseEvent) => {
+      setMousePosition({ x: e.clientX, y: e.clientY });
+    };
+    window.addEventListener('mousemove', updateMousePosition);
+    return () => window.removeEventListener('mousemove', updateMousePosition);
+  }, []);
+
+  return mousePosition;
+};
+
+const CustomCursor = ({ isDark }: { isDark: boolean }) => {
+  const { x, y } = useMousePosition();
+  const cursorX = useSpring(0, { damping: 25, stiffness: 300 });
+  const cursorY = useSpring(0, { damping: 25, stiffness: 300 });
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      cursorX.set(e.clientX);
+      cursorY.set(e.clientY);
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
+  }, [cursorX, cursorY]);
+
+  return (
+    <motion.div
+      className="fixed top-0 left-0 z-[9999] pointer-events-none hidden lg:block"
+      style={{
+        x: cursorX,
+        y: cursorY,
+        translateX: '-50%',
+        translateY: '-50%',
+      }}
+    >
+      <div className="relative flex items-center justify-center">
+        {/* Crosshair lines */}
+        <div className="absolute h-8 w-[1px] bg-blue-500/40" />
+        <div className="absolute w-8 h-[1px] bg-blue-500/40" />
+
+        {/* Corner brackets */}
+        <div className="absolute -top-4 -left-4 h-2 w-2 border-t border-l border-blue-500" />
+        <div className="absolute -top-4 -right-4 h-2 w-2 border-t border-r border-blue-500" />
+        <div className="absolute -bottom-4 -left-4 h-2 w-2 border-b border-l border-blue-500" />
+        <div className="absolute -bottom-4 -right-4 h-2 w-2 border-b border-r border-blue-500" />
+
+        {/* Center dot */}
+        <div className="h-1 w-1 rounded-full bg-blue-500 shadow-[0_0_10px_rgba(37,99,235,0.8)]" />
+
+        {/* Scanning ring */}
+        <motion.div
+          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+          transition={{ duration: 2, repeat: Infinity }}
+          className="absolute h-10 w-10 rounded-full border border-blue-500/20"
+        />
+
+        {/* Coordinates */}
+        <div className="absolute top-6 left-6 flex flex-col font-mono text-[7px] uppercase tracking-[0.2em] text-blue-500/60">
+          <span>LAT: {((y / window.innerHeight) * 180 - 90).toFixed(4)}</span>
+          <span>LNG: {((x / window.innerWidth) * 360 - 180).toFixed(4)}</span>
+          <span className="mt-1 text-blue-500/30">SCANNING_ACTIVE</span>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
 
 const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => {
   const isDark = theme === 'dark';
@@ -22,8 +90,8 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
   const [vitResult, setVitResult] = useState<DetectionResult | null>(null);
   const [swinResult, setSwinResult] = useState<DetectionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [zoomedImage, setZoomedImage] = useState<{ url: string; model: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const MAX_COMPARE_IMAGE_SIZE_MB = 1;
 
   const handleReset = () => {
     if (isDetecting) return;
@@ -40,6 +108,18 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+
+    if (!file) return;
+
+    const fileSizeMB = file.size / (1024 * 1024);
+
+    if (fileSizeMB > MAX_COMPARE_IMAGE_SIZE_MB) {
+      setError(
+        `Selected image is ${fileSizeMB.toFixed(2)} MB. Maximum allowed size is ${MAX_COMPARE_IMAGE_SIZE_MB} MB.`
+      );
+      return;
+    }
+
     if (file) {
       if (!file.type.startsWith('image/')) {
         alert("Please upload a portrait image.");
@@ -64,14 +144,14 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
     setError(null);
     try {
       const uid = auth.currentUser?.uid || 'guest';
-      
+
       // Run sequentially to prevent backend OOM / timeouts
       const vitRes = await detectDeepfake(uid, image, ModelType.ViT);
       setVitResult(vitRes);
-      
+
       const swinRes = await detectDeepfake(uid, image, ModelType.Swin);
       setSwinResult(swinRes);
-      
+
     } catch (err: any) {
       console.error("Inference Error:", err);
       setError(err?.response?.data?.error || err.message || "Model analysis failed. Please try again.");
@@ -95,44 +175,45 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
         <div className="space-y-8 animate-in fade-in duration-700">
           <div className="flex items-end justify-between">
             <div>
-              <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isDark ? 'text-zinc-500' : 'text-slate-400'}`}>Inference Score</p>
+              <p className="dashboard-panel-title">Inference Score</p>
               <p className="text-4xl font-black heading-font">{result.confidence}%</p>
             </div>
-            <p className={`text-[10px] font-mono font-bold text-blue-500/50 ${isDark ? 'text-zinc-600' : 'text-slate-400'}`}>{result.inferenceTime}ms</p>
+            <p className="text-[10px] font-mono font-bold text-blue-500/50 dashboard-title-desc">{result.inferenceTime}ms</p>
           </div>
 
-          <motion.div 
-            layoutId={`heatmap-container-${modelName}`}
-            onClick={() => result?.attentionMapUrl && setZoomedImage({ url: result.attentionMapUrl, model: modelName })}
-            className={`aspect-video rounded-2xl overflow-hidden border group/heatmap relative ${
-              result?.attentionMapUrl ? 'cursor-zoom-in' : 'cursor-default'
-            } ${isDark ? 'bg-black border-zinc-800' : 'bg-slate-50 border-slate-100'}`}
-          >
-            {result.attentionMapUrl ? (
-              <>
-                <motion.img 
-                  layoutId={`heatmap-img-${modelName}`}
-                  src={result.attentionMapUrl} 
-                  className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700" 
-                  alt={`${modelName} Heatmap`} 
+          <HoverCard openDelay={200} closeDelay={200}>
+            <HoverCardTrigger asChild>
+              <div
+                className="aspect-video dashboard-heatmap-container cursor-zoom-in group/heatmap relative overflow-hidden rounded-2xl"
+              >
+                <img
+                  src={result.attentionMapUrl}
+                  className="w-full h-full object-cover grayscale opacity-40 group-hover/heatmap:grayscale-0 group-hover/heatmap:opacity-100 group-hover/heatmap:scale-105 transition-all duration-700"
+                  alt={`${modelName} Heatmap`}
                 />
                 <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/heatmap:opacity-100 transition-opacity bg-black/20">
-                  <div className="p-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
+                  <div className="p-3 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white shadow-xl">
                     <EyeIcon className="w-6 h-6" />
                   </div>
                 </div>
-              </>
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center gap-2 opacity-20">
-                <EyeIcon className="w-8 h-8" />
-                <p className="text-[10px] font-bold uppercase tracking-widest">Heatmap Unavailable</p>
               </div>
+            </HoverCardTrigger>
+            {result?.attentionMapUrl && (
+              <HoverCardContent side={modelName === 'ViT' ? 'left' : 'right'} align="center" sideOffset={24} className="w-[500px] p-0 overflow-hidden bg-black border-zinc-800">
+                <div className="relative rounded-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                  <img src={result.attentionMapUrl} className="w-full aspect-square object-cover" alt="Magnified Heatmap" />
+                  <div className="absolute inset-x-0 bottom-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
+                    <h3 className="text-xl font-bold text-white heading-font">{modelName} Forensic Map</h3>
+                    <p className="text-zinc-400 text-sm mt-1">Full-resolution neural attention analysis.</p>
+                  </div>
+                </div>
+              </HoverCardContent>
             )}
-          </motion.div>
+          </HoverCard>
 
           <div className="space-y-4">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 heading-font">Forensic Signature</h4>
-            <p className={`text-xs leading-relaxed font-light ${isDark ? 'text-zinc-400' : 'text-slate-600'}`}>
+            <p className="text-xs leading-relaxed font-light dashboard-title-desc">
               {modelName} identifies {result.prediction === 'Fake' ? 'anomalous patterns in focal regions' : 'natural biological consistency'} across the face mesh.
               {modelName === 'ViT' ? ' Captures wide-range dependencies.' : ' Analyzes hierarchical scales.'}
             </p>
@@ -147,37 +228,32 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
     </div>
   );
 
-  return (
+  return (<div>
+    <CustomCursor isDark={isDark} />
     <div className="space-y-12 fade-in relative">
       <header className="flex flex-col md:flex-row md:items-center justify-between gap-6 border-b border-zinc-900/10 pb-8 relative z-10">
         <div className="space-y-1">
           <h1 className="text-4xl font-black tracking-tighter heading-font">Model Comparison</h1>
-          <p className={`text-sm font-light ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>Benchmark ViT vs Swin Transformer performance side-by-side.</p>
+          <p className="dashboard-title-desc">Benchmark ViT vs Swin Transformer performance side-by-side.</p>
         </div>
 
-        {/* Desktop-only button in the header as it was originally */}
-        {!vitResult && (
-          <div className="hidden md:flex flex-col items-end gap-2">
-            <button
-              disabled={!image || isDetecting}
-              onClick={runInference}
-              className={`btn-primary px-10 ${!image || isDetecting ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
-            >
-              {isDetecting ? 'Running Analysis...' : 'Run Benchmarks'}
-            </button>
-            {error && <p className="text-rose-500 text-xs font-medium">{error}</p>}
-          </div>
-        )}
+        <div className="flex flex-col items-end gap-2">
+          <button
+            disabled={!image || isDetecting}
+            onClick={runInference}
+            className={`btn-primary px-10 ${!image || isDetecting ? 'opacity-50 cursor-not-allowed grayscale' : ''}`}
+          >
+            {isDetecting ? 'Running Analysis...' : 'Run Benchmarks'}
+          </button>
+        </div>
       </header>
 
       <div className="max-w-4xl mx-auto space-y-12">
-        <div className={`p-8 rounded-2xl border transition-all flex flex-col items-center gap-8 ${
-          isDark ? 'bg-zinc-900/10 border-zinc-900' : 'bg-slate-50 border-slate-200'
-        } ${!vitResult ? 'max-w-md mx-auto w-full justify-center md:max-w-none md:mx-0 md:flex-row' : 'md:flex-row'}`}>
-          <div className="relative group shrink-0 flex flex-col items-center gap-4">
+        <div className="dashboard-panel transition-all flex flex-col md:flex-row items-center gap-8">
+          <div className="relative group shrink-0">
             <div
               onClick={() => !image && fileInputRef.current?.click()}
-              className={`w-40 h-40 rounded-2xl border-2 border-dashed transition-all flex items-center justify-center cursor-pointer overflow-hidden relative ${isRemoving ? 'fade-out' : ''} ${isDark ? 'bg-zinc-950 border-zinc-800 hover:border-blue-500/30' : 'bg-white border-slate-200 shadow-sm hover:border-blue-600/30'}`}
+              className={`w-40 h-40 dashboard-upload-box ${isRemoving ? 'fade-out' : ''}`}
             >
               {image ? (
                 <div className="relative w-full h-full">
@@ -188,10 +264,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
                     onClick={(e) => { e.stopPropagation(); handleReset(); }}
                     disabled={isDetecting}
                     title={isDetecting ? "Please wait until analysis completes." : "Remove image"}
-                    className={`absolute top-2 right-2 w-6 h-6 rounded-full border flex items-center justify-center transition-all duration-300 z-10 ${isDetecting ? 'opacity-30 cursor-not-allowed' : 'hover:scale-105'} ${isDark
-                      ? 'bg-zinc-900/80 border-zinc-700 text-zinc-400 hover:bg-rose-500/20 hover:border-rose-500/40 hover:text-rose-500'
-                      : 'bg-white/80 border-slate-200 text-slate-500 hover:bg-rose-50/50 hover:border-rose-500/40 hover:text-rose-500 shadow-sm'
-                      }`}
+                    className={`dashboard-close-btn absolute top-2 right-2 w-6 h-6 ${isDetecting ? 'opacity-30 cursor-not-allowed' : ''}`}
                   >
                     <XMarkIcon className="w-3.5 h-3.5" />
                   </button>
@@ -207,63 +280,52 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
 
             {/* File Metadata */}
             {image && fileInfo && (
-              <div className={`text-center animate-in fade-in duration-500 ${isRemoving ? 'fade-out' : ''}`}>
-                <p className={`text-[10px] font-bold truncate max-w-[150px] ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+              <div className={`absolute -bottom-6 left-0 right-0 text-center animate-in fade-in duration-500 ${isRemoving ? 'fade-out' : ''}`}>
+                <p className="text-[10px] font-bold truncate px-2 dashboard-title-desc">
                   {fileInfo.name.length > 15 ? fileInfo.name.substring(0, 12) + "..." : fileInfo.name} • {fileInfo.size}
                 </p>
               </div>
             )}
-
-            {/* Run Benchmarks button below the box on mobile when not analyzed yet */}
-            {!vitResult && (
-              <div className="flex flex-col items-center gap-2 w-full md:hidden">
-                <button
-                  disabled={!image || isDetecting}
-                  onClick={runInference}
-                  className={`w-full py-3 px-8 rounded-xl font-bold text-xs uppercase tracking-widest transition-all ${
-                    !image || isDetecting
-                      ? 'bg-zinc-800 text-zinc-600 cursor-not-allowed opacity-50'
-                      : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-600/20 active:scale-[0.99]'
-                  }`}
-                >
-                  {isDetecting ? 'Running Benchmarks...' : 'Run Benchmarks'}
-                </button>
-                {error && <p className="text-rose-500 text-xs font-medium text-center">{error}</p>}
-              </div>
-            )}
           </div>
 
-          <div className={`flex-1 space-y-4 text-center md:text-left ${!vitResult ? 'hidden md:block' : ''}`}>
+          <div className="flex-1 space-y-4 text-center md:text-left">
             <h3 className="text-xl font-bold">Dual-Inference Pipeline</h3>
-            <p className={`text-sm leading-relaxed ${isDark ? 'text-zinc-500' : 'text-slate-500'}`}>
+            <p className="text-sm leading-relaxed dashboard-title-desc">
               Compare state-of-the-art transformer architectures. Global attention (ViT) vs Hierarchical Shifted Windows (Swin). Upload one image to run both models simultaneously.
             </p>
           </div>
         </div>
 
-        {/* Grid of benchmark results - hidden on mobile until results are ready, visible as grid on desktop */}
-        <div className={`grid md:grid-cols-2 gap-8 ${vitResult && swinResult ? '' : 'hidden md:grid'}`}>
+        {/* Upload Error */}
+        {error && (
+          <div className="mt-3 text-left animate-in fade-in duration-300">
+            <p className="text-rose-500 text-xs font-medium">
+              {error}
+            </p>
+          </div>
+        )}
+
+        <div className="grid md:grid-cols-2 gap-8">
           <ModelResult title="Vision Transformer" modelName="ViT" result={vitResult} />
           <ModelResult title="Swin Transformer" modelName="Swin" result={swinResult} />
         </div>
 
         {vitResult && swinResult && (
-          <>
-            <div className={`p-8 rounded-2xl border ${isDark ? 'bg-blue-500/5 border-blue-500/10' : 'bg-blue-50/50 border-blue-100'}`}>
-              <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 mb-8 text-center">Inference Consensus</h3>
+          <div className="dashboard-panel">
+            <h3 className="text-xs font-bold uppercase tracking-widest text-blue-600 mb-8 text-center">Inference Consensus</h3>
             <div className="grid md:grid-cols-3 gap-12 text-center">
               <div className="space-y-1">
-                <p className={`text-[10px] font-bold uppercase tracking-widest opacity-40 ${isDark ? 'text-white' : 'text-slate-900'}`}>Confidence Delta</p>
+                <p className="dashboard-panel-title opacity-40">Confidence Delta</p>
                 <p className="text-3xl font-bold">{(Math.abs(vitResult.confidence - swinResult.confidence)).toFixed(1)}%</p>
               </div>
               <div className="space-y-1">
-                <p className={`text-[10px] font-bold uppercase tracking-widest opacity-40 ${isDark ? 'text-white' : 'text-slate-900'}`}>Verdict</p>
+                <p className="dashboard-panel-title opacity-40">Verdict</p>
                 <p className={`text-3xl font-bold ${vitResult.prediction === swinResult.prediction ? 'text-emerald-500' : 'text-rose-500'}`}>
                   {vitResult.prediction === swinResult.prediction ? 'Unanimous' : 'Split'}
                 </p>
               </div>
               <div className="space-y-1">
-                <p className={`text-[10px] font-bold uppercase tracking-widest opacity-40 ${isDark ? 'text-white' : 'text-slate-900'}`}>Insight</p>
+                <p className="dashboard-panel-title opacity-40">Insight</p>
                 <p className="text-sm font-medium">
                   {vitResult.prediction === swinResult.prediction
                     ? 'High model consensus'
@@ -275,86 +337,26 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
             <div className="mt-10 space-y-6">
               <h4 className="text-sm font-bold border-b border-blue-500/10 pb-2">Model Insights</h4>
               <div className="grid md:grid-cols-2 gap-6 text-xs leading-relaxed">
-                <div className={`p-4 rounded-xl ${isDark ? 'bg-zinc-950/50' : 'bg-white/50'}`}>
+                <div className="dashboard-insight-box">
                   <p className="font-bold text-blue-600 mb-1">ViT Insight</p>
-                  <p className={isDark ? 'text-zinc-400' : 'text-slate-600'}>
+                  <p className="dashboard-insight-text">
                     {vitResult.structured_explanation?.summary || vitResult.explanation?.trim() || 'Excels at capturing global face structure. Better for detecting full-face swaps and holistic structural anomalies.'}
                   </p>
                 </div>
-                <div className={`p-4 rounded-xl ${isDark ? 'bg-zinc-950/50' : 'bg-white/50'}`}>
+                <div className="dashboard-insight-box">
                   <p className="font-bold text-blue-600 mb-1">Swin Insight</p>
-                  <p className={isDark ? 'text-zinc-400' : 'text-slate-600'}>
+                  <p className="dashboard-insight-text">
                     {swinResult.structured_explanation?.summary || swinResult.explanation?.trim() || 'Superior for fine-grained texture analysis. Detects micro-jitter in skin pores and refined ocular edge blending issues.'}
                   </p>
                 </div>
               </div>
             </div>
           </div>
-        </>
-      )}
+        )}
       </div>
 
-      {/* Pop-up Heatmap Viewer (Google Folder Style) */}
-      <AnimatePresence>
-        {zoomedImage && (
-          <div className="absolute top-20 left-20 z-[60] flex items-center justify-center p-4 md:p-6">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setZoomedImage(null)}
-              className="absolute inset-0 bg-transparent"
-            />
-            
-            <motion.div
-              layoutId={`heatmap-container-${zoomedImage.model}`}
-              className={`relative w-full max-w-2xl rounded-[3.5rem] overflow-hidden border shadow-2xl ${isDark ? 'bg-zinc-900/40 border-white/10' : 'bg-white/40 border-slate-200'} backdrop-blur-3xl`}
-            >
-              {/* Folder Header */}
-              <div className="px-10 pt-10 pb-6 flex items-center justify-between">
-                <div className="space-y-1">
-                  <h3 className={`text-2xl font-bold heading-font tracking-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>{zoomedImage.model} Analysis</h3>
-                  <p className={`text-[10px] font-bold uppercase tracking-[0.2em] opacity-40 ${isDark ? 'text-white' : 'text-slate-900'}`}>Forensic Attention Map</p>
-                </div>
-                <button 
-                  onClick={() => setZoomedImage(null)}
-                  className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isDark ? 'bg-white/5 border border-white/10 text-white hover:bg-white/10' : 'bg-black/5 border border-black/10 text-slate-900 hover:bg-black/10'}`}
-                >
-                  <XMarkIcon className="w-6 h-6" />
-                </button>
-              </div>
-
-              <div className="px-10 pb-10">
-                <div className={`relative rounded-[2.5rem] overflow-hidden border shadow-inner ${isDark ? 'border-white/5 bg-black/20' : 'border-black/5 bg-white/20'}`}>
-
-                  <motion.img 
-                    layoutId={`heatmap-img-${zoomedImage.model}`}
-                    src={zoomedImage.url} 
-                    className="w-full h-full object-contain" 
-                    alt="Magnified Heatmap" 
-                  />
-                  
-                  {/* Subtle Corner Accents */}
-                  <div className="absolute top-6 left-6 w-2 h-2 rounded-full bg-blue-500/40 blur-[1px]" />
-                  <div className="absolute top-6 right-6 w-2 h-2 rounded-full bg-blue-500/40 blur-[1px]" />
-                </div>
-
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.2 }}
-                  className="mt-8 flex items-center justify-center gap-4"
-                >
-                   <div className="h-px w-8 bg-current opacity-10" />
-                   <p className={`text-[9px] font-black uppercase tracking-[0.3em] opacity-30 ${isDark ? 'text-white' : 'text-slate-900'}`}>Secure Biometric Scan</p>
-                   <div className="h-px w-8 bg-current opacity-10" />
-                </motion.div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
     </div>
+  </div>
   );
 };
 
