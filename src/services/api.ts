@@ -92,6 +92,24 @@ export const detectDeepfake = async (firebase_uid: string, base64Image: string, 
     }
 };
 
+export const detectDeepfakeVideo = async (firebase_uid: string, videoFile: File) => {
+    try {
+        const formData = new FormData();
+        formData.append('video', videoFile);
+        formData.append('firebase_uid', firebase_uid);
+        
+        const response = await apiClient.post('/detect-video', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+        return response.data;
+    } catch (error) {
+        console.error('Error in deepfake video detection:', error);
+        throw error;
+    }
+};
+
 export const getScanHistory = async (firebase_uid: string) => {
     try {
         const response = await apiClient.get(`/scans/history/${firebase_uid}`);

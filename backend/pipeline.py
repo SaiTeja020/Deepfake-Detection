@@ -24,6 +24,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import logging
 import time
 import math
@@ -85,6 +86,7 @@ class DeepfakePipeline:
 
         self._mtcnn = None       # lazy: facenet_pytorch.MTCNN
         self._face_mesh = None   # lazy: mediapipe FaceMesh
+        self._face_detector = None  # lazy: mediapipe FaceDetector
 
     # ------------------------------------------------------------------ #
     # Lazy resource initialisation                                         #
@@ -141,39 +143,41 @@ class DeepfakePipeline:
                 self._face_mesh = None
         return self._face_mesh
 
+    def _get_face_detector(self):
+        """Lazy initialise MediaPipe Face Detection for video frames."""
+        if self._face_detector is None:
+            try:
+                import mediapipe as mp
+                self._face_detector = mp.solutions.face_detection.FaceDetection(
+                    model_selection=0, min_detection_confidence=0.5
+                )
+                logger.info("MediaPipe FaceDetector initialised for video")
+            except Exception as e:
+                logger.warning(f"MediaPipe FaceDetector initialisation failed: {e}")
+                self._face_detector = None
+        return self._face_detector
+
     # ------------------------------------------------------------------ #
     # Component 1 – Face Detection                                         #
     # ------------------------------------------------------------------ #
 
     def detect_faces(self, image: Image.Image) -> List[Dict[str, Any]]:
         """
-        Detect all faces using MTCNN, also returning 5-point keypoints.
-
-        Keypoints per face (all in image pixel coordinates):
-            kp[0] = left_eye,   kp[1] = right_eye,
-            kp[2] = nose,       kp[3] = mouth_left,
-            kp[4] = mouth_right
-
-        Returns:
-            List of dicts: [{"box": [x1,y1,x2,y2], "confidence": float, "kp": list}, ...]
-            Empty list if no faces found or MTCNN not available.
+        Detect all faces using MTCNN (used for static images). Returns bounding boxes, confidence, and 5‑point keypoints.
         """
         mtcnn = self._get_mtcnn()
         if mtcnn is None:
             return []
-
         try:
             boxes, probs, kps = mtcnn.detect(image, landmarks=True)
         except Exception as e:
             logger.warning("MTCNN detection failed: %s", e)
             return []
-
         if boxes is None or len(boxes) == 0:
             return []
-
         faces = []
         for i, (box, prob) in enumerate(zip(boxes, probs)):
-            if prob is None or prob < 0.85:  # Increased threshold to filter out background false positives
+            if prob is None or prob < 0.85:
                 continue
             x1, y1, x2, y2 = box
             if x2 <= x1 or y2 <= y1:
@@ -181,14 +185,42 @@ class DeepfakePipeline:
             area = (x2 - x1) * (y2 - y1)
             if area < MIN_FACE_AREA:
                 continue
-            # 5-point landmarks: [[le], [re], [nose], [ml], [mr]]
             kp = kps[i].tolist() if kps is not None and kps[i] is not None else None
             faces.append({
                 "box": [float(x1), float(y1), float(x2), float(y2)],
                 "confidence": float(prob),
                 "kp": kp,
             })
+        faces.sort(key=lambda f: f["confidence"], reverse=True)
+        return faces[:MAX_FACES]
 
+    def video_detect_faces(self, image: Image.Image) -> List[Dict[str, Any]]:
+        """
+        Detect faces in video frames using MediaPipe FaceDetector.
+        Returns bounding boxes (absolute pixel coords) and detection confidence.
+        """
+        detector = self._get_face_detector()
+        if detector is None:
+            return []
+        # MediaPipe expects RGB image as numpy array
+        img_np = np.array(image)
+        results = detector.process(img_np)
+        if results.detections is None:
+            return []
+        h, w, _ = img_np.shape
+        faces = []
+        for det in results.detections:
+            box = det.location_data.relative_bounding_box
+            x1 = int(box.xmin * w)
+            y1 = int(box.ymin * h)
+            x2 = int((box.xmin + box.width) * w)
+            y2 = int((box.ymin + box.height) * h)
+            confidence = float(det.score[0]) if hasattr(det, 'score') else 0.0
+            faces.append({
+                "box": [float(x1), float(y1), float(x2), float(y2)],
+                "confidence": confidence,
+                "kp": None,
+            })
         faces.sort(key=lambda f: f["confidence"], reverse=True)
         return faces[:MAX_FACES]
 
@@ -657,16 +689,17 @@ class DeepfakePipeline:
             canvas = cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR)
 
         for face in pipeline_result.get("faces", []):
-            x1, y1, x2, y2 = face["box"]
-            fused   = face["fused_score"]
-            verdict = face.get("face_verdict", "Real")   # per-face label
-            color   = COLOURS.get(verdict, (180, 180, 180)) # Default to grey if unknown
+            x1, y1, x2, y2 = map(int, face["box"])
+            verdict = face.get("face_verdict", "Real")
+            color   = COLOURS.get(verdict, (180, 180, 180))
 
             # Box
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
 
-            # Label: "F0: Deepfake (0.83)"
-            txt = f"F{face['face_id']}: {verdict} ({fused:.2f})"
+            # Label: just the verdict — no static confidence number
+            # (the temporal transformer classifies the whole track once,
+            # so any per-frame number would be identical across all frames)
+            txt = f"F{face['face_id']}: {verdict}"
             font       = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.45
             thickness  = 1
@@ -727,6 +760,519 @@ class DeepfakePipeline:
             pass
 
         return canvas
+
+
+
+# ---------------------------------------------------------------------------
+# Spatio-Temporal Video Pipeline
+# ---------------------------------------------------------------------------
+class DeepfakeVideoPipeline(DeepfakePipeline):
+    """
+    Spatio-Temporal deepfake detection pipeline for videos.
+    Extends DeepfakePipeline to handle multi-frame video sequences,
+    face tracking, and temporal transformer inference.
+    """
+    def __init__(self, model, processor, device, freq_branch=None, video_model=None):
+        super().__init__(model, processor, device, freq_branch=freq_branch, fusion_head=None)
+        self.video_model = video_model
+
+    def draw_meshes_on_bgr(self, canvas: np.ndarray, faces_in_frame: List[Dict[str, Any]]) -> np.ndarray:
+        """Draw MediaPipe FaceMesh wireframes on a BGR numpy canvas."""
+        try:
+            import mediapipe.python.solutions.drawing_utils as mp_drawing
+            import mediapipe.python.solutions.face_mesh as mp_face_mesh
+        except ImportError:
+            try:
+                from mediapipe.solutions import drawing_utils as mp_drawing
+                from mediapipe.solutions import face_mesh as mp_face_mesh
+            except ImportError:
+                return canvas
+
+        drawing_spec = mp_drawing.DrawingSpec(thickness=1, circle_radius=1, color=(0, 255, 0))
+        for face in faces_in_frame:
+            landmarks = face.get("landmarks")
+            if landmarks is not None:
+                mp_drawing.draw_landmarks(
+                    image=canvas,
+                    landmark_list=landmarks,
+                    connections=mp_face_mesh.FACEMESH_TESSELATION,
+                    landmark_drawing_spec=None,
+                    connection_drawing_spec=drawing_spec
+                )
+        return canvas
+
+    def run_video(self, video_path: str, outside_fraction: float = 0.0) -> Tuple[Dict[str, Any], str, str]:
+        """
+        Run the spatio-temporal video deepfake detection on the uploaded video path.
+        """
+        t_start = time.time()
+        
+        # 1. Open the video to read basic properties
+        cap = cv2.VideoCapture(video_path)
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        
+        if total_frames <= 0 or not cap.isOpened():
+            cap.release()
+            raise ValueError(f"Cannot read video file: {video_path}")
+            
+        if fps <= 0:
+            fps = 30.0
+            
+        logger.info(f"Loaded video for deepfake analysis: {total_frames} frames, {fps:.2f} FPS, {width}x{height}")
+        
+        # 2. Process every frame of the video sequentially to extract and track faces
+        tracks = []  # List of face tracks. Each track is a list of frame detections.
+        frame_idx = 0
+        
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_frame = Image.fromarray(frame_rgb)
+            
+            # Detect faces on this video frame using MediaPipe (MTCNN is reserved for static images)
+            detections = self.video_detect_faces(pil_frame)
+            
+            # Run FaceMesh on every detected face to obtain geometry landmarks
+            # Also compute per-frame spatial confidence from the Swin backbone
+            detections_with_mesh = []
+            for det in detections:
+                box = det["box"]
+                x1, y1, x2, y2 = self.expand_box(box, width, height)
+                face_crop = pil_frame.crop((x1, y1, x2, y2))
+                
+                # Extract landmarks via MediaPipe FaceMesh
+                landmarks = self.get_landmarks(face_crop)
+                
+                # Per-frame spatial confidence from Swin backbone
+                try:
+                    probs_dict = self.predict_model(face_crop)
+                    frame_fake_prob = probs_dict["fake_prob"]
+                    frame_real_prob = probs_dict["real_prob"]
+                except Exception:
+                    frame_fake_prob = 0.0
+                    frame_real_prob = 1.0
+                
+                detections_with_mesh.append({
+                    "box": [float(x1), float(y1), float(x2), float(y2)],
+                    "kp": None,  # keypoints not needed for video
+                    "confidence": det["confidence"],
+                    "landmarks": landmarks,
+                    "crop": face_crop,
+                    "frame_fake_prob": frame_fake_prob,
+                    "frame_real_prob": frame_real_prob,
+                })
+                
+            # Track association (simple center-distance tracking)
+            dist_threshold = max(width, height) * 0.15
+            if frame_idx == 0:
+                for idx, det in enumerate(detections_with_mesh):
+                    tracks.append([{
+                        "frame_idx": frame_idx,
+                        "box": det["box"],
+                        "kp": det["kp"],
+                        "confidence": det["confidence"],
+                        "landmarks": det["landmarks"],
+                        "crop": det["crop"],
+                        "face_id": idx,
+                        "frame_fake_prob": det["frame_fake_prob"],
+                        "frame_real_prob": det["frame_real_prob"],
+                    }])
+            else:
+                matched_detections = set()
+                for track in tracks:
+                    last_det = track[-1]
+                    last_box = last_det["box"]
+                    last_center = ((last_box[0] + last_box[2]) / 2, (last_box[1] + last_box[3]) / 2)
+                    
+                    best_det_idx = -1
+                    best_dist = float('inf')
+                    for idx, det in enumerate(detections_with_mesh):
+                        if idx in matched_detections:
+                            continue
+                        box = det["box"]
+                        center = ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+                        dist = math.sqrt((last_center[0] - center[0])**2 + (last_center[1] - center[1])**2)
+                        if dist < best_dist and dist < dist_threshold:
+                            best_dist = dist
+                            best_det_idx = idx
+                            
+                    if best_det_idx != -1:
+                        matched_detections.add(best_det_idx)
+                        det = detections_with_mesh[best_det_idx]
+                        track.append({
+                            "frame_idx": frame_idx,
+                            "box": det["box"],
+                            "kp": det["kp"],
+                            "confidence": det["confidence"],
+                            "landmarks": det["landmarks"],
+                            "crop": det["crop"],
+                            "face_id": last_det["face_id"],
+                            "frame_fake_prob": det["frame_fake_prob"],
+                            "frame_real_prob": det["frame_real_prob"],
+                        })
+                        
+                # Start new tracks for unmatched detections
+                for idx, det in enumerate(detections_with_mesh):
+                    if idx not in matched_detections:
+                        new_id = len(tracks)
+                        tracks.append([{
+                            "frame_idx": frame_idx,
+                            "box": det["box"],
+                            "kp": det["kp"],
+                            "confidence": det["confidence"],
+                            "landmarks": det["landmarks"],
+                            "crop": det["crop"],
+                            "face_id": new_id,
+                            "frame_fake_prob": det["frame_fake_prob"],
+                            "frame_real_prob": det["frame_real_prob"],
+                        }])
+                        
+            frame_idx += 1
+            
+        cap.release()
+        
+        face_results = []
+        
+        # 3. For each track, prepare 16 frames and run temporal classifier
+        if tracks:
+            for track in tracks:
+                L = len(track)
+                if L == 0:
+                    continue
+                    
+                # Subsample or pad to exactly 16 frames
+                sampled_track_indices = np.linspace(0, L - 1, 16, dtype=int)
+                sampled_detections = [track[i] for i in sampled_track_indices]
+                
+                # Prepare tensor: [16, 3, 224, 224]
+                frames_tensors = []
+                for det in sampled_detections:
+                    proc_out = self.processor(images=det["crop"], return_tensors="pt")
+                    frames_tensors.append(proc_out["pixel_values"].squeeze(0))
+                    
+                video_sequence = torch.stack(frames_tensors).to(self.device)
+                
+                # Spatial and frequency feature extraction
+                # Unified Spatio-Temporal Inference in one pass
+                with torch.no_grad():
+                    if self.video_model is not None:
+                        logits = self.video_model(video_sequence.unsqueeze(0))  # [1, 2]
+                        probs = torch.softmax(logits, dim=1).squeeze(0)
+                        fake_prob = float(probs[self.fake_idx].item())
+                        real_prob = float(probs[self.real_idx].item())
+                    else:
+                        fake_prob = 0.5
+                        real_prob = 0.5
+                        
+                # Extract and aggregate geometry features across frames
+                geom_metrics_list = []
+                for det in track:
+                    w_crop, h_crop = det["crop"].size
+                    if det["landmarks"] is not None:
+                        geom_feats = self.extract_geometry_features(det["landmarks"], w_crop, h_crop)
+                        geom_metrics_list.append(geom_feats)
+                        
+                if geom_metrics_list:
+                    avg_eye_asymmetry = float(np.mean([g["eye_asymmetry"] for g in geom_metrics_list]))
+                    avg_lip_distance = float(np.mean([g["lip_distance"] for g in geom_metrics_list]))
+                    avg_alignment = float(np.mean([g.get("alignment_score", 0.0) for g in geom_metrics_list]))
+                else:
+                    avg_eye_asymmetry = 0.0
+                    avg_lip_distance = 0.0
+                    avg_alignment = 0.0
+                    
+                aggregated_geom = {
+                    "eye_asymmetry": avg_eye_asymmetry,
+                    "lip_distance": avg_lip_distance,
+                    "alignment_score": avg_alignment
+                }
+                
+                # Dynamic logit fusion
+                avg_crop_quality = float(np.mean([d["confidence"] for d in track]))
+                fused_score, geom_s = self.fuse_scores(
+                    fake_prob,
+                    aggregated_geom,
+                    crop_quality=avg_crop_quality,
+                    outside_fraction=outside_fraction
+                )
+                
+                # Verdict
+                if abs(fake_prob - real_prob) < 0.10 or (0.45 <= fused_score <= 0.55):
+                    face_verdict = "Uncertain"
+                else:
+                    face_verdict = self.face_verdict_from_score(fused_score)
+                    
+                face_results.append({
+                    "face_id": track[0]["face_id"],
+                    "box": track[0]["box"],
+                    "face_verdict": face_verdict,
+                    "cnn_label": "Fake" if fake_prob > real_prob else "Real",
+                    "cnn_conf": round(max(fake_prob, real_prob), 4),
+                    "fake_prob": round(fake_prob, 4),
+                    "real_prob": round(real_prob, 4),
+                    "geom_score": geom_s,
+                    "fused_score": fused_score,
+                    "mtcnn_conf": round(avg_crop_quality, 4),
+                    "geometry": aggregated_geom,
+                    "_track_detections": track
+                })
+        else:
+            # Fallback: full frame uniform sampling (16 frames)
+            logger.info("No face tracks identified. Running on full frames fallback.")
+            cap = cv2.VideoCapture(video_path)
+            temp_frames = []
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                temp_frames.append(frame)
+            cap.release()
+            
+            L = len(temp_frames)
+            if L == 0:
+                raise ValueError("Video file contains no readable frames.")
+                
+            sampled_indices = np.linspace(0, L - 1, 16, dtype=int)
+            frames_tensors = []
+            for idx in sampled_indices:
+                frame_rgb = cv2.cvtColor(temp_frames[idx], cv2.COLOR_BGR2RGB)
+                pil_frame = Image.fromarray(frame_rgb)
+                proc_out = self.processor(images=pil_frame, return_tensors="pt")
+                frames_tensors.append(proc_out["pixel_values"].squeeze(0))
+                
+            video_sequence = torch.stack(frames_tensors).to(self.device)
+            with torch.no_grad():
+                if self.video_model is not None:
+                    logits = self.video_model(video_sequence.unsqueeze(0))
+                    probs = torch.softmax(logits, dim=1).squeeze(0)
+                    fake_prob = float(probs[self.fake_idx].item())
+                    real_prob = float(probs[self.real_idx].item())
+                else:
+                    fake_prob = 0.5
+                    real_prob = 0.5
+                    
+            fused_score, geom_s = self.fuse_scores(
+                fake_prob,
+                {"eye_asymmetry": 0.0, "lip_distance": 0.0},
+                outside_fraction=outside_fraction
+            )
+            face_verdict = self.face_verdict_from_score(fused_score)
+            
+            face_results.append({
+                "face_id": 0,
+                "box": [0, 0, width, height],
+                "face_verdict": face_verdict,
+                "cnn_label": "Fake" if fake_prob > real_prob else "Real",
+                "cnn_conf": round(max(fake_prob, real_prob), 4),
+                "fake_prob": round(fake_prob, 4),
+                "real_prob": round(real_prob, 4),
+                "geom_score": geom_s,
+                "fused_score": fused_score,
+                "geometry": {"eye_asymmetry": 0.0, "lip_distance": 0.0},
+                "mtcnn_conf": 1.0,
+            })
+            
+        # 4. Image-level aggregation
+        final_label, final_score = self.aggregate_faces(face_results)
+        
+        # 5. Build detections map by frame
+        # Include per-frame spatial fake_prob so we can compute a meaningful
+        # rolling average per second instead of repeating the static track score
+        detections_by_frame = {}
+        for track in face_results:
+            track_dets = track.get("_track_detections", [])
+            for det in track_dets:
+                f_idx = det["frame_idx"]
+                if f_idx not in detections_by_frame:
+                    detections_by_frame[f_idx] = []
+                detections_by_frame[f_idx].append({
+                    "face_id": det["face_id"],
+                    "box": det["box"],
+                    "fused_score": track["fused_score"],
+                    "face_verdict": track["face_verdict"],
+                    "det_confidence": det["confidence"],  # per-frame MTCNN confidence
+                    "landmarks": det["landmarks"],
+                    "frame_fake_prob": det.get("frame_fake_prob", track["fake_prob"]),
+                    "frame_real_prob": det.get("frame_real_prob", track["real_prob"]),
+                })
+                
+        # 6. Render processed video with face box and mesh overlays
+        import uuid
+        temp_id = uuid.uuid4().hex
+        output_video_filename = f"processed_{temp_id}.mp4"
+        output_video_path = os.path.join(os.path.dirname(video_path), output_video_filename)
+        
+        cap = cv2.VideoCapture(video_path)
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(output_video_path, fourcc, fps, (width, height))
+        
+        frame_idx = 0
+        key_frame_canvas = None
+        max_fused_score = -1.0
+        # Mapping (face_id, second) -> list of per-frame spatial fake_probs
+        # Used to compute a rolling average confidence per second per face
+        sec_fake_probs: dict[tuple[int, int], list[float]] = {}
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+                
+            faces_in_frame = detections_by_frame.get(frame_idx, [])
+            sec = int(frame_idx / fps) if fps else 0
+
+            # ------- Per-second confidence aggregation (per face) --------
+            # Accumulate per-frame spatial fake_prob by (face_id, second)
+            for f in faces_in_frame:
+                fid = f["face_id"]
+                fp = f.get("frame_fake_prob", f.get("fused_score", 0.5))
+                sec_fake_probs.setdefault((fid, sec), []).append(fp)
+
+            # Compute per-face rolling average fake_prob for the current second
+            # and derive a live verdict + display score
+            per_face_overlay: list[dict] = []
+            for f in faces_in_frame:
+                fid = f["face_id"]
+                bucket = sec_fake_probs.get((fid, sec), [])
+                avg_fake = sum(bucket) / len(bucket) if bucket else 0.5
+
+                # Apply image-pipeline verdict thresholds on the rolling avg
+                if avg_fake > THRESH_DEEPFAKE:
+                    live_verdict = "Deepfake"
+                elif avg_fake > THRESH_SUSPICIOUS:
+                    live_verdict = "Suspicious"
+                elif avg_fake > 0.45:          # narrow band around 0.5
+                    live_verdict = "Uncertain"
+                else:
+                    live_verdict = "Real"
+
+                # Display score: show confidence of the identified class
+                # (real confidence when Real/Uncertain, fake confidence when Fake/Suspicious)
+                if live_verdict in ("Real", "Uncertain"):
+                    display_score = 1.0 - avg_fake
+                else:
+                    display_score = avg_fake
+
+                per_face_overlay.append({
+                    "face_id": fid,
+                    "box": f["box"],
+                    "live_verdict": live_verdict,
+                    "display_score": display_score,
+                    "fused_score": f["fused_score"],
+                    "face_verdict": live_verdict,  # use live verdict for box colour
+                    "landmarks": f.get("landmarks"),
+                })
+
+            if per_face_overlay:
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_frame = Image.fromarray(frame_rgb)
+                
+                dummy_result = {
+                    "faces": [
+                        {
+                            "face_id": fo["face_id"],
+                            "box": fo["box"],
+                            "fused_score": fo["fused_score"],
+                            "face_verdict": fo["live_verdict"],
+                        }
+                        for fo in per_face_overlay
+                    ]
+                }
+                canvas = DeepfakePipeline.draw_face_boxes(pil_frame, dummy_result)
+            else:
+                if not tracks and face_results:
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    pil_frame = Image.fromarray(frame_rgb)
+                    dummy_result = {
+                        "faces": [
+                            {
+                                "face_id": 0,
+                                "box": [0, 0, width, height],
+                                "fused_score": face_results[0]["fused_score"],
+                                "face_verdict": face_results[0]["face_verdict"]
+                            }
+                        ]
+                    }
+                    canvas = DeepfakePipeline.draw_face_boxes(pil_frame, dummy_result)
+                else:
+                    # No detections – use raw frame as canvas
+                    canvas = frame.copy()
+            
+            # Ensure canvas is a BGR numpy array for OpenCV functions and writing to out
+            if isinstance(canvas, Image.Image):
+                canvas = cv2.cvtColor(np.array(canvas), cv2.COLOR_RGB2BGR)
+            
+            # ------- Overlay per-second rolling avg confidence on each box --------
+            for fo in per_face_overlay:
+                box = fo["box"]
+                x1, y1, x2, y2 = box
+                txt_x = int(x2 - 50)
+                txt_y = int(y1 + 15)
+                txt = f"{fo['display_score']:.2f}"
+                cv2.putText(canvas, txt, (txt_x, txt_y), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.50, (255, 255, 255), 1, cv2.LINE_AA)
+
+            # Capture frame with highest deepfake score for keyframe
+            current_max_fused = max([f["fused_score"] for f in faces_in_frame]) if faces_in_frame else 0.0
+            if current_max_fused > max_fused_score:
+                max_fused_score = current_max_fused
+                key_frame_canvas = canvas.copy()
+                
+            out.write(canvas)
+            frame_idx += 1
+            
+        cap.release()
+        out.release()
+        
+        # Transcode the mp4v video to browser-compatible H.264 video using ffmpeg
+        compat_video_path = output_video_path.replace(".mp4", "_compat.mp4")
+        try:
+            import subprocess
+            subprocess.run([
+                "ffmpeg", "-y", "-i", output_video_path,
+                "-vcodec", "libx264", "-pix_fmt", "yuv420p",
+                compat_video_path
+            ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            
+            # Replace the original with the compatible one
+            if os.path.exists(compat_video_path):
+                os.remove(output_video_path)
+                os.rename(compat_video_path, output_video_path)
+                logger.info("Successfully transcoded video to H.264 via ffmpeg.")
+        except Exception as trans_err:
+            logger.warning(f"Failed to transcode output video to H.264: {trans_err}")
+        
+        # Save keyframe
+        keyframe_filename = f"keyframe_{temp_id}.jpg"
+        keyframe_path = os.path.join(os.path.dirname(video_path), keyframe_filename)
+        if key_frame_canvas is not None:
+            cv2.imwrite(keyframe_path, key_frame_canvas)
+        else:
+            # Grab first frame as fallback
+            cap = cv2.VideoCapture(video_path)
+            ret, first_frame = cap.read()
+            cap.release()
+            if ret:
+                cv2.imwrite(keyframe_path, first_frame)
+                
+        # Clean up track internal detections (which contain complex non-serializable PIL images and landmarks)
+        for r in face_results:
+            r.pop("_track_detections", None)
+            
+        pipeline_result = {
+            "final_label": final_label,
+            "confidence": final_score,
+            "inference_ms": int((time.time() - t_start) * 1000),
+            "faces": face_results,
+            "no_faces_detected": not bool(tracks),
+        }
+        
+        return pipeline_result, output_video_path, keyframe_path
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     libusb-1.0-0 \
     libnss3 \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Optimize: Copy requirements first to leverage Docker layer caching

@@ -23,6 +23,7 @@ services:
       - ./foresight-2b6ca-9c19b754a2a2.json:/app/firebase-service-account.json:ro
       - backend_venv:/app/.venv
       - uv_cache:/root/.cache/uv
+      - hf_cache:/root/.cache/huggingface
     environment:
       - FIREBASE_SERVICE_ACCOUNT_PATH=/app/firebase-service-account.json
       - UV_LINK_MODE=copy
@@ -33,3 +34,4 @@ volumes:
   frontend_node_modules:
   backend_venv:
   uv_cache:
+  hf_cache:

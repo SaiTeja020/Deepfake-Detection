@@ -33,17 +33,26 @@ import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'model')))
 try:
     from freq_branch import FrequencyBranch, FusionClassifier
+    from temporal_transformer import load_temporal_transformer
     _FREQ_BRANCH_AVAILABLE = True
 except ImportError as _e:
     logger_bootstrap = logging.getLogger(__name__)
-    logger_bootstrap.warning("freq_branch.py not found — fused inference disabled: %s", _e)
+    logger_bootstrap.warning("freq_branch.py or temporal_transformer.py not found — fused inference disabled: %s", _e)
     _FREQ_BRANCH_AVAILABLE = False
+
+from pipeline import DeepfakePipeline, DeepfakeVideoPipeline
 
 load_dotenv()
 
 from llm_adapter import provider_router, structured_to_legacy
 
 # Setup logging
+import warnings
+warnings.filterwarnings("ignore")
+
+import transformers
+transformers.logging.set_verbosity_error()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -79,18 +88,90 @@ MODEL_PATHS = {
     "ViT": "SARVM/Frequency-Refined-ViT",
     "Swin Transformer": "SARVM/Frequency-Swin",
 }
-model_cache = {"models": {}, "processors": {}, "names": {}, "freq_branches": {}, "fusion_heads": {}}
+model_cache = {"models": {}, "processors": {}, "names": {}, "freq_branches": {}, "fusion_heads": {}, "video_models": {}}
 deepfake_pipeline = None
+deepfake_video_pipeline = None
 
-def get_model(model_type="ViT"):
+# Lock to prevent concurrent image/spatial model downloads and initialization
+_model_lock = threading.Lock()
+
+# Lock to prevent concurrent model downloads (Flask can spawn multiple threads)
+_video_model_lock = threading.Lock()
+# Timestamp of last failed video-model load — used for retry backoff
+_video_model_last_fail: float = 0.0
+# Minimum seconds between retry attempts after a load failure
+_VIDEO_MODEL_RETRY_BACKOFF = 60.0
+
+def get_video_model():
+    global model_cache, _video_model_last_fail
+    # Fast path: already loaded successfully
+    cached = model_cache["video_models"].get("Temporal-Swin", "__NOT_SET__")
+    if cached != "__NOT_SET__" and cached is not None:
+        return cached
+
+    # Backoff: if the last attempt failed recently, don't hammer HF Hub
+    if _video_model_last_fail > 0:
+        elapsed = time.time() - _video_model_last_fail
+        if elapsed < _VIDEO_MODEL_RETRY_BACKOFF:
+            print(f"Video model load backoff: {_VIDEO_MODEL_RETRY_BACKOFF - elapsed:.0f}s remaining before retry.")
+            return None
+
+    # Serialize downloads — only one thread loads at a time
+    with _video_model_lock:
+        # Re-check inside lock in case another thread just finished loading
+        cached = model_cache["video_models"].get("Temporal-Swin", "__NOT_SET__")
+        if cached != "__NOT_SET__" and cached is not None:
+            return cached
+
+        try:
+            hf_token = os.getenv("HF_TOKEN")
+            model = load_temporal_transformer(DEVICE, hf_token=hf_token)
+            if model is not None:
+                model_cache["video_models"]["Temporal-Swin"] = model
+                _video_model_last_fail = 0.0  # reset on success
+                print("Video model cached successfully.")
+            else:
+                # Don't cache None — allow a retry after backoff
+                _video_model_last_fail = time.time()
+                print("CRITICAL: load_temporal_transformer returned None — will retry after backoff.")
+        except Exception as e:
+            _video_model_last_fail = time.time()
+            print(f"CRITICAL: Failed to load SwinTemporalTransformer: {e}")
+            traceback.print_exc()
+            # Do NOT cache None here so the next request can retry after backoff
+
+    return model_cache["video_models"].get("Temporal-Swin", None)
+
+def get_model(model_type="Swin Transformer"):
     global model_cache
     
     if model_type not in MODEL_PATHS:
-        model_type = "ViT"
+        model_type = "Swin Transformer"
         
     model_name = MODEL_PATHS[model_type]
     
-    if model_type not in model_cache["models"]:
+    # Fast path check outside lock
+    if model_type in model_cache["models"]:
+        return (
+            model_cache["models"][model_type],
+            model_cache["processors"][model_type],
+            None,
+            model_cache["names"][model_type],
+            model_cache["freq_branches"].get(model_type),
+            model_cache["fusion_heads"].get(model_type),
+        )
+
+    _model_lock.acquire()
+    try:
+        if model_type in model_cache["models"]:
+            return (
+                model_cache["models"][model_type],
+                model_cache["processors"][model_type],
+                None,
+                model_cache["names"][model_type],
+                model_cache["freq_branches"].get(model_type),
+                model_cache["fusion_heads"].get(model_type),
+            )
         try:
             hf_token = os.getenv("HF_TOKEN")
             print(f"Loading {model_type} model ({model_name})...")
@@ -172,7 +253,12 @@ def get_model(model_type="ViT"):
                     # safetensors stores a flat state_dict — load directly
                     state_dict = safetensors_load_file(standalone_path, device=str(DEVICE))
                     freq_branch = FrequencyBranch(embed_dim=768).to(DEVICE)
-                    freq_branch.load_state_dict(state_dict)
+                    # Use strict=False to accommodate any minor key differences
+                    missing, unexpected = freq_branch.load_state_dict(state_dict, strict=False)
+                    if missing:
+                        print(f"  FrequencyBranch missing keys: {missing}")
+                    if unexpected:
+                        print(f"  FrequencyBranch unexpected keys: {unexpected}")
                     freq_branch.eval()
                     for param in freq_branch.parameters():
                         param.requires_grad = False
@@ -195,6 +281,8 @@ def get_model(model_type="ViT"):
             print(f"CRITICAL: Failed to load {model_type} model: {e}")
             traceback.print_exc()
             return None, None, None, None, None, None
+    finally:
+        _model_lock.release()
 
     return (
         model_cache["models"][model_type],
@@ -412,6 +500,27 @@ def upload_to_supabase(image_data: str, bucket: str, folder: str = "") -> tuple[
         return public_url, None
     except Exception as e:
         return None, str(e)
+
+
+def upload_file_to_supabase(file_path: str, bucket: str, folder: str = "", mime_type: str = "video/mp4") -> tuple[str | None, str | None]:
+    """Helper to upload a local disk file to Supabase Storage."""
+    try:
+        if not os.path.exists(file_path):
+            return None, f"File {file_path} does not exist"
+            
+        file_ext = os.path.splitext(file_path)[1].replace(".", "")
+        dest_filename = f"{uuid.uuid4()}.{file_ext}"
+        dest_path = f"{folder}/{dest_filename}" if folder else dest_filename
+        
+        with open(file_path, "rb") as f:
+            content = f.read()
+            
+        supabase.storage.from_(bucket).upload(dest_path, content, {"content-type": mime_type})
+        public_url = supabase.storage.from_(bucket).get_public_url(dest_path)
+        return public_url, None
+    except Exception as e:
+        return None, str(e)
+
 
 @app.route('/api/users/sync', methods=['POST'])
 def sync_user():
@@ -890,9 +999,179 @@ def detect_deepfake():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/detect-video', methods=['POST'])
+def detect_deepfake_video():
+    global deepfake_video_pipeline
+    
+    if 'video' not in request.files:
+        return jsonify({"error": "No video file provided"}), 400
+        
+    video_file = request.files['video']
+    firebase_uid = request.form.get('firebase_uid', 'guest')
+    
+    # Save the file to a temporary location
+    temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'scratch'))
+    os.makedirs(temp_dir, exist_ok=True)
+    temp_video_path = os.path.join(temp_dir, f"temp_{uuid.uuid4().hex}_{video_file.filename}")
+    video_file.save(temp_video_path)
+    
+    output_video_path = None
+    keyframe_path = None
+    
+    try:
+        # Load Swin backbone (spatial features) and frequency branch
+        m, p, t, loaded_name, freq_branch, fusion_head = get_model("Swin Transformer")
+        if m is None:
+            return jsonify({"error": "Swin backbone load failed"}), 503
+            
+        # Load SwinTemporalTransformer video model
+        video_model = get_video_model()
+        if video_model is None:
+            return jsonify({"error": "Temporal Transformer load failed"}), 503
+            
+        # Initialize video pipeline
+        if deepfake_video_pipeline is None or deepfake_video_pipeline.model is not m or deepfake_video_pipeline.video_model is not video_model:
+            deepfake_video_pipeline = DeepfakeVideoPipeline(
+                m, p, DEVICE,
+                freq_branch=freq_branch,
+                video_model=video_model
+            )
+            
+        # Run video pipeline (which does face tracking, MTCNN & FaceMesh on every frame, Swin+Freq, and temporal prediction)
+        pipeline_result, output_video_path, keyframe_path = deepfake_video_pipeline.run_video(temp_video_path, outside_fraction=0.0)
+        
+        # Calculate overall verdict metrics
+        final_label = pipeline_result["final_label"]
+        raw_confidence = pipeline_result["confidence"]  # fused fake probability
+
+        # Display confidence for the identified class:
+        # Real/Uncertain -> show real confidence (1 - fake_prob)
+        # Deepfake/Suspicious -> show fake confidence (fake_prob)
+        if final_label in ("Real", "Uncertain"):
+            display_confidence = 1.0 - raw_confidence
+        else:
+            display_confidence = raw_confidence
+
+        conf_pct = round(display_confidence * 100, 2)
+        inference_time = pipeline_result["inference_ms"]
+        face_list = pipeline_result["faces"]
+        
+        # Upload processed video and keyframe to Supabase
+        video_url, upload_err1 = upload_file_to_supabase(output_video_path, "heatmaps", folder=firebase_uid, mime_type="video/mp4")
+        keyframe_url, upload_err2 = upload_file_to_supabase(keyframe_path, "heatmaps", folder=firebase_uid, mime_type="image/jpeg")
+        
+        if upload_err1:
+            logger.warning(f"Video upload failed: {upload_err1}")
+        if upload_err2:
+            logger.warning(f"Keyframe upload failed: {upload_err2}")
+            
+        # Use Supabase URLs if uploaded successfully, fallback to None
+        final_video_url = video_url if video_url else None
+        final_keyframe_url = keyframe_url if keyframe_url else None
+        
+        # Build Forensic Evidence Packet
+        interpreter = ForensicInterpreter()
+        global_fake_prob = float(pipeline_result["confidence"])
+        face_interpretations = [interpreter.interpret_face(f, None, global_fake_prob) for f in face_list]
+        evidence_packet = EvidenceBuilder.build(
+            verdict=final_label,
+            confidence=global_fake_prob,
+            faces=face_interpretations,
+            attention_outside_faces=0.0,
+            model_type="Temporal-Swin",
+            global_fake_prob=global_fake_prob
+        )
+
+        # NOTE: LLM analysis is intentionally skipped for video detections.
+        # LLM explanations are only used for image-based detection (ViT / Swin).
+        # For video, we surface the structured evidence packet directly.
+        conf_label = (
+            "High" if global_fake_prob >= 0.75
+            else "Moderate" if global_fake_prob >= 0.50
+            else "Low"
+        )
+        video_explanation = (
+            f"Video analysis completed using the Swin + Frequency Temporal Transformer model. "
+            f"Verdict: {final_label} (confidence: {round(global_fake_prob * 100, 1)}%). "
+            f"Confidence level: {conf_label}. "
+            f"{len(face_list)} face region(s) were tracked across frames."
+        )
+        structured_explanation = {
+            "verdict": final_label,
+            "confidence": round(global_fake_prob * 100, 1),
+            "summary": video_explanation,
+            "suspicious_domains": evidence_packet.get("suspicious_regions", []),
+            "model_consensus": f"Temporal-Swin ({conf_label} confidence)",
+            "evidence": evidence_packet,
+        }
+        legacy = {
+            "explanation": video_explanation,
+            "suspicious_domains": evidence_packet.get("suspicious_regions", []),
+            "model_consensus": structured_explanation["model_consensus"],
+        }
+        
+        serializable_faces = []
+        for f in face_list:
+            clean_face = {}
+            for k, v in f.items():
+                if k.startswith('_'): continue
+                if isinstance(v, (np.float32, np.float64)): clean_face[k] = float(v)
+                elif isinstance(v, (np.int32, np.int64)): clean_face[k] = int(v)
+                elif isinstance(v, dict): clean_face[k] = {sk: (float(sv) if isinstance(sv, (np.float32, np.float64)) else sv) for sk, sv in v.items()}
+                else: clean_face[k] = v
+            serializable_faces.append(clean_face)
+            
+        return jsonify({
+            "prediction": str(final_label),
+            "confidence": float(conf_pct),
+            "inferenceTime": int(inference_time),
+            "attentionMapUrl": final_video_url,       # Processed video URL for frontend visualization
+            "keyframeUrl": final_keyframe_url,         # Static keyframe image URL
+            "facemeshUrl": final_keyframe_url,         # Fallback for meshes
+            "explanation": str(legacy["explanation"]),
+            "suspicious_domains": legacy["suspicious_domains"],
+            "model_consensus": str(legacy["model_consensus"]),
+            "structured_explanation": structured_explanation,
+            "final_label": str(final_label),
+            "faces": serializable_faces,
+            "face_count": int(len(face_list)),
+            "no_faces_detected": bool(pipeline_result.get("no_faces_detected", False)),
+            "model_name": "Swin+Frequency Temporal Transformer"
+        }), 200
+        
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+        
+    finally:
+        # Clean up temporary disk files
+        try:
+            if os.path.exists(temp_video_path):
+                os.remove(temp_video_path)
+            if output_video_path and os.path.exists(output_video_path):
+                os.remove(output_video_path)
+            if keyframe_path and os.path.exists(keyframe_path):
+                os.remove(keyframe_path)
+        except Exception as cleanup_err:
+            logger.warning(f"Error cleaning up temporary video files: {cleanup_err}")
+
+
 def background_preload():
+    """Eagerly load both the image Swin model and the video temporal model
+    at container startup so the first user request is never a cold-load."""
     time.sleep(2)
-    with app.app_context(): get_model("ViT")
+    with app.app_context():
+        try:
+            get_model("Swin Transformer")
+            print("[preload] Swin Transformer image model ready.")
+        except Exception as e:
+            print(f"[preload] Swin Transformer image model failed: {e}")
+        try:
+            get_video_model()
+            print("[preload] Temporal-Swin video model ready.")
+        except Exception as e:
+            print(f"[preload] Temporal-Swin video model failed: {e}")
 
 if __name__ == '__main__':
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not app.debug:

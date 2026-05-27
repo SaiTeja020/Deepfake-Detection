@@ -15,7 +15,7 @@ export interface StructuredExplanation {
 
 export interface FaceResult {
   face_id: number;
-  face_verdict: 'Deepfake' | 'Suspicious' | 'Real';
+  face_verdict: 'Deepfake' | 'Suspicious' | 'Uncertain' | 'Real';
   box: [number, number, number, number];
   cnn_label: string;
   cnn_conf: number;

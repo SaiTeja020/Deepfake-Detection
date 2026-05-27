@@ -39,28 +39,28 @@ class FrequencyBranch(nn.Module):
     This makes the branch fully backbone-agnostic.
     """
 
-    def __init__(self, embed_dim: int = 768):
+    def __init__(self, embed_dim: int = 768, channel_sizes=None):
         super().__init__()
         self.embed_dim = embed_dim
-        self.freq_extractor = nn.Sequential(
-            # Block 1: 3 → 32 channels, halve spatial resolution
-            nn.Conv2d(3, 32, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            # Block 2: 32 → 64 channels
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            # Block 3: 64 → 128 channels
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(),
-            # Global average pooling → [B, 128, 1, 1]
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
-            # Project to embedding dimension
-            nn.Linear(128, embed_dim),
-        )
+        # Default channel_sizes matches the checkpoint saved in SARVM/Frequency_Branch:
+        # [64, 128, embed_dim] — the last conv outputs embed_dim channels directly,
+        # so no separate Linear projection is needed.
+        if channel_sizes is None:
+            channel_sizes = [64, 128, embed_dim]
+            
+        layers = []
+        in_c = 3
+        for out_c in channel_sizes:
+            layers.append(nn.Conv2d(in_c, out_c, kernel_size=3, stride=2, padding=1))
+            layers.append(nn.BatchNorm2d(out_c))
+            layers.append(nn.ReLU())
+            in_c = out_c
+            
+        layers.append(nn.AdaptiveAvgPool2d((1, 1)))
+        layers.append(nn.Flatten())
+        
+        # No projection needed — last Conv already outputs embed_dim channels
+        self.freq_extractor = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """

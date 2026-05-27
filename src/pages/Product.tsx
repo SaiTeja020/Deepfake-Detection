@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { motion, AnimatePresence, useSpring } from 'framer-motion';
 import { ModelType, DetectionResult, FaceResult } from '../types';
-import { detectDeepfake } from '../services/api';
+import { detectDeepfake, detectDeepfakeVideo } from '../services/api';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
   CloudArrowUpIcon,
@@ -985,10 +985,13 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const isDark = theme === 'dark';
   const [analysisMode, setAnalysisMode] = useState<'image' | 'video'>('image');
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoPreviewFailed, setVideoPreviewFailed] = useState(false);
+  const [processedVideoFailed, setProcessedVideoFailed] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const [selectedModel, setSelectedModel] = useState<ModelType>(ModelType.ViT);
   const [image, setImage] = useState<string | null>(null);
+  const [rawFile, setRawFile] = useState<File | null>(null);
   const [fileInfo, setFileInfo] = useState<{ name: string; size: string } | null>(null);
   const [isDetecting, setIsDetecting] = useState(false);
   const [result, setResult] = useState<DetectionResult | null>(null);
@@ -1012,8 +1015,11 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
     const reset = () => {
       setImage(null);
+      setRawFile(null);
       if (videoUrl) URL.revokeObjectURL(videoUrl);
       setVideoUrl(null);
+      setVideoPreviewFailed(false);
+      setProcessedVideoFailed(false);
       setResult(null);
       setFileInfo(null);
       setShowHeatmap(false);
@@ -1041,11 +1047,9 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     handleReset(true);
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const processSelectedFile = (file: File) => {
     setError(null);
-
-    if (!file) return;
+    setVideoPreviewFailed(false);
 
     const fileSizeMB = file.size / (1024 * 1024);
 
@@ -1081,6 +1085,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       if (!file.type.startsWith("image/")) {
         setError("Invalid file format. Please upload a clear face image.");
         setImage(null);
+        setRawFile(null);
         setResult(null);
         setFileInfo(null);
         return;
@@ -1090,6 +1095,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
       reader.onloadend = () => {
         setImage(reader.result as string);
+        setRawFile(file);
         setFileInfo({
           name: file.name,
           size: fileSize,
@@ -1100,9 +1106,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
       reader.readAsDataURL(file);
     } else {
-      if (!file.type.startsWith("video/")) {
+      const fileExt = file.name.split('.').pop()?.toLowerCase();
+      const validVideoExtensions = ['mp4', 'avi', 'mov', 'webm', 'mkv', '3gp', 'ogg'];
+      const isValidVideo = file.type.startsWith("video/") || (fileExt && validVideoExtensions.includes(fileExt));
+      
+      if (!isValidVideo) {
         setError("Invalid file format. Please upload a valid video.");
         setVideoUrl(null);
+        setRawFile(null);
         setResult(null);
         setFileInfo(null);
         return;
@@ -1116,26 +1127,60 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         if (tempVideo.duration > 180) {
           setError("Video duration exceeds the maximum limit of 3 minutes (180 seconds).");
           setVideoUrl(null);
+          setRawFile(null);
           setResult(null);
           setFileInfo(null);
           URL.revokeObjectURL(url);
           return;
         }
         setVideoUrl(url);
+        setRawFile(file);
         setFileInfo({
           name: file.name,
           size: fileSize,
         });
         setResult(null);
         setShowHeatmap(false);
+        // Reset preview-failed flag — metadata loaded fine so browser CAN play this
+        setVideoPreviewFailed(false);
       };
       tempVideo.onerror = () => {
-        setError("Invalid video file or failed to read video metadata.");
-        setVideoUrl(null);
+        // Browser can't decode/preview this file, but it can still be uploaded and scanned.
+        // Mark as preview-failed so the UI shows the "ready to scan" card instead of a broken player.
+        console.warn("Browser cannot preview this video (codec/container not supported). File is still valid for server-side scanning.");
+        setError(null);
+        setVideoUrl(url);
+        setRawFile(file);
+        setFileInfo({
+          name: file.name,
+          size: fileSize,
+        });
         setResult(null);
-        setFileInfo(null);
-        URL.revokeObjectURL(url);
+        setShowHeatmap(false);
+        setVideoPreviewFailed(true);
       };
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      processSelectedFile(file);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (isDetecting) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      processSelectedFile(file);
     }
   };
 
@@ -1170,35 +1215,49 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     setIsExplanationExpanded(false);
     setIsEvidenceExpanded(false);
     try {
-      let imagePayload = image;
-      let modelToUse = selectedModel;
+      let detectionResult: DetectionResult;
+      let originalUrl = '';
+      let heatmapUrl = '';
 
       if (analysisMode === 'video') {
-        imagePayload = await extractFrameFromVideo();
-        modelToUse = ModelType.ViT;
+        if (!rawFile) throw new Error("No video file selected");
+        detectionResult = await detectDeepfakeVideo(auth.currentUser?.uid || 'guest', rawFile);
+        originalUrl = detectionResult.keyframeUrl || '';
+        heatmapUrl = detectionResult.attentionMapUrl || '';
+      } else {
+        if (!image) throw new Error("No image data extracted");
+        detectionResult = await detectDeepfake(auth.currentUser?.uid || 'guest', image, selectedModel);
+        originalUrl = image;
+        heatmapUrl = detectionResult.attentionMapUrl || '';
       }
 
-      if (!imagePayload) throw new Error("No image data extracted");
-
-      const detectionResult = await detectDeepfake(auth.currentUser?.uid || 'guest', imagePayload, modelToUse);
       setResult(detectionResult);
+      if (analysisMode === 'video') {
+        setVideoPreviewFailed(false);
+        setProcessedVideoFailed(false);
+        setShowHeatmap(true);
+      }
 
       if (auth.currentUser && profile?.save_history !== false) {
-        const uploadRes = await uploadScanMedia(
-          auth.currentUser.uid,
-          imagePayload,
-          detectionResult.attentionMapUrl
-        );
+        if (analysisMode === 'image') {
+          const uploadRes = await uploadScanMedia(
+            auth.currentUser.uid,
+            image,
+            detectionResult.attentionMapUrl
+          );
+          originalUrl = uploadRes.original_url || image;
+          heatmapUrl = uploadRes.heatmap_url || detectionResult.attentionMapUrl;
+        }
 
         await saveScanHistory({
           firebase_uid: auth.currentUser.uid,
           file_name: fileInfo.name,
-          original_media_url: uploadRes.original_url || imagePayload,
-          heatmap_url: uploadRes.heatmap_url || detectionResult.attentionMapUrl,
+          original_media_url: originalUrl,
+          heatmap_url: heatmapUrl,
           result: detectionResult.prediction,
           confidence: detectionResult.confidence,
-          model_used: modelToUse,
-          explanation: detectionResult.explanation || `Analysis using ${modelToUse} protocol.`
+          model_used: analysisMode === 'video' ? 'Temporal-Swin' : selectedModel,
+          explanation: detectionResult.explanation || `Analysis using ${analysisMode === 'video' ? 'Temporal-Swin' : selectedModel} protocol.`
         });
       }
     } catch (err) {
@@ -1579,6 +1638,8 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   if (analysisMode === 'image' && !image) fileInputRef.current?.click();
                   else if (analysisMode === 'video' && !videoUrl) fileInputRef.current?.click();
                 }}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
                 className={`relative overflow-hidden ${analysisMode === 'video' ? 'aspect-video' : 'aspect-square'} dashboard-upload-box ${isRemoving ? 'fade-out' : ''
                   } ${(analysisMode === 'image' ? image : videoUrl) ? 'border-solid border-blue-500/30' : ''}`}
               >
@@ -1714,13 +1775,58 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   </div>
                 ) : analysisMode === 'video' && videoUrl ? (
                   <div className="relative w-full h-full group">
-                    <video
-                      ref={videoRef}
-                      src={videoUrl}
-                      controls
-                      controlsList="nodownload nofullscreen noremoteplayback"
-                      className={`w-full h-full object-cover transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
-                    />
+                    {videoPreviewFailed && !(showHeatmap && result) ? (
+                      <div className="flex flex-col items-center justify-center w-full h-full p-8 bg-zinc-900 border border-zinc-800 rounded-[inherit] space-y-4 text-center">
+                        <div className="w-16 h-16 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center border border-blue-500/20">
+                          <FilmIcon className="w-8 h-8" />
+                        </div>
+                        <div className="space-y-1.5">
+                          <p className="text-sm font-bold text-slate-100 uppercase tracking-wider">Ready to Scan</p>
+                          <p className="text-xs text-zinc-400 max-w-[280px]">{fileInfo?.name ?? 'Video file'} selected. In-browser preview is not available for this format, but the file will be analysed normally.</p>
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-blue-400/70 mt-1">Click "Start Analysis" to begin</p>
+                        </div>
+                      </div>
+                    ) : (
+                      // Processed video result or original video preview
+                      showHeatmap && result && processedVideoFailed ? (
+                        // Processed video failed to load — fall back to keyframe image
+                        <div className="relative w-full h-full flex items-center justify-center bg-zinc-950">
+                          {result.keyframeUrl ? (
+                            <img
+                              src={result.keyframeUrl}
+                              alt="Video keyframe"
+                              className="w-full h-full object-contain"
+                            />
+                          ) : (
+                            <div className="flex flex-col items-center gap-3 text-zinc-400">
+                              <FilmIcon className="w-10 h-10" />
+                              <p className="text-xs font-bold uppercase tracking-wider">Processed video unavailable — keyframe not found</p>
+                            </div>
+                          )}
+                          <div className="absolute bottom-0 inset-x-0 px-4 py-2 bg-black/60 backdrop-blur-sm text-[10px] text-zinc-400 font-medium">
+                            Video playback unavailable in this browser. Showing best keyframe instead.
+                          </div>
+                        </div>
+                      ) : (
+                        <video
+                          key={showHeatmap && result ? 'processed' : 'original'}
+                          ref={videoRef}
+                          src={showHeatmap && result ? result.attentionMapUrl : videoUrl}
+                          onError={() => {
+                            if (showHeatmap && result) {
+                              // Processed video (Supabase URL) failed — show keyframe fallback
+                              setProcessedVideoFailed(true);
+                            } else {
+                              // Original local blob video failed — show ready-to-scan card
+                              setVideoPreviewFailed(true);
+                            }
+                          }}
+                          controls
+                          controlsList="nodownload nofullscreen"
+                          className={`w-full h-full object-cover transition-opacity duration-500 ${isDetecting ? 'opacity-50' : 'opacity-100'}`}
+                        />
+                      )
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); handleReset(); }}
                       disabled={isDetecting}
@@ -1735,46 +1841,30 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                         <p className="text-xs font-bold uppercase tracking-widest text-white shadow-sm">Extracting frames and analyzing...</p>
                       </div>
                     )}
-                    {result && !showHeatmap && (
+                    {result && (
                       <button
-                        onClick={(e) => { e.stopPropagation(); setShowHeatmap(true); }}
-                        className="absolute bottom-4 right-4 px-4 py-2 bg-zinc-950/80 backdrop-blur-md border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-white hover:bg-zinc-900 transition-all ml-auto flex items-center space-x-2 z-20"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const nextState = !showHeatmap;
+                          setShowHeatmap(nextState);
+                          if (nextState) {
+                            // Switching to processed view — reset original-video fallback
+                            setVideoPreviewFailed(false);
+                          } else {
+                            // Switching to original video — reset processed-video fallback so
+                            // it retries when user goes back to the overlay view
+                            setProcessedVideoFailed(false);
+                          }
+                        }}
+                        className="absolute bottom-4 right-4 px-4 py-2 bg-zinc-950/80 backdrop-blur-md border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-white hover:bg-zinc-900 transition-all z-20 flex items-center space-x-2"
                       >
                         <EyeIcon className="w-4 h-4" />
-                        <span>View Keyframe Map</span>
+                        <span>
+                          {showHeatmap
+                            ? 'View Original Video'
+                            : (processedVideoFailed ? 'View Keyframe' : 'View Overlay Video')}
+                        </span>
                       </button>
-                    )}
-                    {showHeatmap && result && (
-                      <HoverCard openDelay={200} closeDelay={200}>
-                        <HoverCardTrigger asChild>
-                          <div className="absolute inset-0 z-10 bg-black/80 flex flex-col items-center justify-center cursor-zoom-in group/zoomer">
-                            <img src={result.attentionMapUrl} className="w-full h-full object-contain opacity-80" alt="Heatmap" />
-                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover/zoomer:opacity-100 transition-opacity">
-                              <div className="p-4 rounded-full bg-white/10 backdrop-blur-md border border-white/20 text-white">
-                                <EyeIcon className="w-8 h-8" />
-                              </div>
-                            </div>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); setShowHeatmap(false); }}
-                              className="absolute bottom-4 right-4 px-4 py-2 bg-zinc-950/80 backdrop-blur-md border border-white/10 rounded-lg text-[10px] font-bold uppercase tracking-widest text-white hover:bg-zinc-900 transition-all z-20 flex items-center space-x-2"
-                            >
-                              <EyeIcon className="w-4 h-4" />
-                              <span>Hide Map</span>
-                            </button>
-                          </div>
-                        </HoverCardTrigger>
-                        {result?.attentionMapUrl && (
-                          <HoverCardContent side="right" align="center" sideOffset={24} className="w-[500px] p-0 overflow-hidden bg-black border-zinc-800">
-                            <div className="relative rounded-xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
-                              <img src={result.attentionMapUrl} className="w-full aspect-square object-cover" alt="Magnified Heatmap" />
-                              <div className="absolute inset-x-0 bottom-0 p-6 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
-                                <h3 className="text-xl font-bold text-white heading-font">Neural Video Forensic Map</h3>
-                                <p className="text-zinc-400 text-sm mt-1">Full-resolution neural attention analysis.</p>
-                              </div>
-                            </div>
-                          </HoverCardContent>
-                        )}
-                      </HoverCard>
                     )}
                   </div>
                 ) : (
@@ -1867,15 +1957,8 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
               {result ? (
                 <div className="space-y-6 animate-in fade-in duration-700">
                   {analysisMode === 'video' ? (
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-                      <div className="space-y-6">
-                        {renderVerdictPanel(result)}
-                      </div>
-                      <div className="space-y-6">
-                        {renderSummaryPanel(result)}
-                        {renderTechnicalExplanation(result)}
-                        {renderSupportingEvidence(result)}
-                      </div>
+                    <div className="space-y-6">
+                      {renderVerdictPanel(result)}
                     </div>
                   ) : (
                     <div className="space-y-6">
@@ -1904,19 +1987,21 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         )}
 
         {/* How Does Our Detection Work? Section */}
-        <div className="space-y-6 pt-12 border-t border-zinc-900/10 dark:border-zinc-800/40">
-          <div className="text-center space-y-2">
-            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/70">Detection Pipeline</span>
-            <h3 className="text-2xl font-black tracking-tight heading-font">How Does Our Detection Work?</h3>
-            <p className="text-xs dashboard-title-desc max-w-2xl mx-auto leading-relaxed">
-              Foresight utilizes a multi-layered biometrics analysis pipeline. We evaluate pixel integrity, spectral noise, and geometry transitions in real-time.
-            </p>
-          </div>
+        {analysisMode === 'image' && (
+          <div className="space-y-6 pt-12 border-t border-zinc-900/10 dark:border-zinc-800/40 animate-in fade-in duration-500">
+            <div className="text-center space-y-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/70">Detection Pipeline</span>
+              <h3 className="text-2xl font-black tracking-tight heading-font">How Does Our Detection Work?</h3>
+              <p className="text-xs dashboard-title-desc max-w-2xl mx-auto leading-relaxed">
+                Foresight utilizes a multi-layered biometrics analysis pipeline. We evaluate pixel integrity, spectral noise, and geometry transitions in real-time.
+              </p>
+            </div>
 
-          <div className="pt-4">
-            <ThreePipeline theme={theme} />
+            <div className="pt-4">
+              <ThreePipeline theme={theme} />
+            </div>
           </div>
-        </div>
+        )}
 
       </div>
     </div>
