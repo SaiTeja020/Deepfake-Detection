@@ -44,8 +44,10 @@ MAX_FACES = 5
 FACE_MARGIN = 0.20       # 20% extra around detected bbox
 W_CNN = 0.85             # Weight for CNN/ViT confidence
 W_GEOM = 0.15            # Weight for geometry anomaly score
-THRESH_DEEPFAKE = 0.70
-THRESH_SUSPICIOUS = 0.50
+THRESH_UNCERTAIN_START = 0.40
+THRESH_UNCERTAIN_END = 0.55
+THRESH_SUSPICIOUS = 0.55
+THRESH_DEEPFAKE = 0.65
 MIN_FACE_AREA = 80 * 80  # Skip faces smaller than 80x80 px to reduce background artifacting
 
 # MediaPipe landmark indices (Face Mesh 468-point model)
@@ -480,14 +482,17 @@ class DeepfakePipeline:
         Apply per-face deepfake thresholds to a fused score.
 
         Returns:
-            "Deepfake"   if fused_score > 0.70
-            "Suspicious" if fused_score > 0.50
+            "Deepfake"   if fused_score >= THRESH_DEEPFAKE
+            "Suspicious" if fused_score >= THRESH_SUSPICIOUS
+            "Uncertain"  if fused_score >= THRESH_UNCERTAIN_START
             "Real"       otherwise
         """
-        if fused_score > THRESH_DEEPFAKE:
+        if fused_score >= THRESH_DEEPFAKE:
             return "Deepfake"
-        elif fused_score > THRESH_SUSPICIOUS:
+        elif fused_score >= THRESH_SUSPICIOUS:
             return "Suspicious"
+        elif fused_score >= THRESH_UNCERTAIN_START:
+            return "Uncertain"
         return "Real"
 
     @staticmethod
@@ -496,12 +501,8 @@ class DeepfakePipeline:
         Compute final image-level verdict from per-face fused scores and verdicts.
 
         Strategy: 
-        1. Score: Average the top-2 fused scores (or single if only one face).
-        2. Label: Priority-based (Deepfake > Suspicious > Uncertain > Real).
-           If any face is Deepfake, the entire image is Deepfake.
-           If no Deepfake but any Suspicious, entire image is Suspicious.
-           If no Deepfake/Suspicious but any Uncertain, entire image is Uncertain.
-           Otherwise Real.
+        Track which face/track group has the highest deepfake confidence (fused_score)
+        and use that group's verdict and confidence to determine the final result.
 
         Returns:
             (final_label, final_score)
@@ -509,22 +510,9 @@ class DeepfakePipeline:
         if not face_results:
             return "NoFaces", 0.0
 
-        scores = sorted(
-            [f["fused_score"] for f in face_results], reverse=True
-        )
-        final_score = float(np.mean(scores[:2]))
-
-        # Priority-based label selection
-        verdicts = [f.get("face_verdict", "Real") for f in face_results]
-        
-        if "Deepfake" in verdicts:
-            label = "Deepfake"
-        elif "Suspicious" in verdicts:
-            label = "Suspicious"
-        elif "Uncertain" in verdicts:
-            label = "Uncertain"
-        else:
-            label = "Real"
+        best_face = max(face_results, key=lambda f: f.get("fused_score", 0.0))
+        label = best_face.get("face_verdict", "Real")
+        final_score = best_face.get("fused_score", 0.0)
 
         return label, round(final_score, 4)
 
@@ -621,8 +609,8 @@ class DeepfakePipeline:
 
             # per-face verdict & Uncertainty checking
             # Rule 1: Probability Gap (Model is torn between classes)
-            # Rule 2: Score Boundary (Model is sitting on the 0.5 fence)
-            if abs(fake_prob - real_prob) < 0.10 or (0.45 <= fused <= 0.55):
+            # Rule 2: Score Boundary (Model is sitting on the fence)
+            if abs(fake_prob - real_prob) < 0.10 or (THRESH_UNCERTAIN_START <= fused < THRESH_UNCERTAIN_END):
                 face_verdict = "Uncertain"
             else:
                 face_verdict = self.face_verdict_from_score(fused)
@@ -678,8 +666,8 @@ class DeepfakePipeline:
         """
         COLOURS = {
             "Deepfake":   (51,  51,  255),   # red in BGR
-            "Suspicious": (0,   165, 255),   # amber in BGR
-            "Real":       (80,  200, 0),     # green in BGR
+            "Suspicious": (0,   255, 255),   # yellow in BGR
+            "Real":       (80,  200,  0),    # green in BGR
             "Uncertain":  (180, 180, 180),   # grey in BGR
         }
 
@@ -964,12 +952,25 @@ class DeepfakeVideoPipeline(DeepfakePipeline):
                     if self.video_model is not None:
                         logits = self.video_model(video_sequence.unsqueeze(0))  # [1, 2]
                         probs = torch.softmax(logits, dim=1).squeeze(0)
-                        fake_prob = float(probs[self.fake_idx].item())
+                        temporal_fake_prob = float(probs[self.fake_idx].item())
                         real_prob = float(probs[self.real_idx].item())
                     else:
-                        fake_prob = 0.5
+                        temporal_fake_prob = 0.5
                         real_prob = 0.5
-                        
+
+                # Mean per-frame spatial fake probability (what drives the per-frame display)
+                frame_fake_probs = [d.get("frame_fake_prob", temporal_fake_prob) for d in track]
+                spatial_mean_fake_prob = float(np.mean(frame_fake_probs))
+
+                # Blend: take the higher of temporal and spatial-mean so the final
+                # verdict is never softer than what the per-frame analysis shows.
+                # Weight: 40% temporal (global context), 60% spatial mean (frame evidence)
+                fake_prob = max(
+                    0.40 * temporal_fake_prob + 0.60 * spatial_mean_fake_prob,
+                    spatial_mean_fake_prob  # floor: never better than the spatial mean
+                )
+                real_prob = 1.0 - fake_prob
+
                 # Extract and aggregate geometry features across frames
                 geom_metrics_list = []
                 for det in track:
@@ -1003,7 +1004,7 @@ class DeepfakeVideoPipeline(DeepfakePipeline):
                 )
                 
                 # Verdict
-                if abs(fake_prob - real_prob) < 0.10 or (0.45 <= fused_score <= 0.55):
+                if abs(fake_prob - real_prob) < 0.10 or (THRESH_UNCERTAIN_START <= fused_score < THRESH_UNCERTAIN_END):
                     face_verdict = "Uncertain"
                 else:
                     face_verdict = self.face_verdict_from_score(fused_score)
@@ -1142,21 +1143,11 @@ class DeepfakeVideoPipeline(DeepfakePipeline):
                 avg_fake = sum(bucket) / len(bucket) if bucket else 0.5
 
                 # Apply image-pipeline verdict thresholds on the rolling avg
-                if avg_fake > THRESH_DEEPFAKE:
-                    live_verdict = "Deepfake"
-                elif avg_fake > THRESH_SUSPICIOUS:
-                    live_verdict = "Suspicious"
-                elif avg_fake > 0.45:          # narrow band around 0.5
-                    live_verdict = "Uncertain"
-                else:
-                    live_verdict = "Real"
+                live_verdict = self.face_verdict_from_score(avg_fake)
 
-                # Display score: show confidence of the identified class
-                # (real confidence when Real/Uncertain, fake confidence when Fake/Suspicious)
-                if live_verdict in ("Real", "Uncertain"):
-                    display_score = 1.0 - avg_fake
-                else:
-                    display_score = avg_fake
+                # Display score: always show the fake/deepfake probability so the
+                # number on screen is consistent regardless of verdict label.
+                display_score = avg_fake
 
                 per_face_overlay.append({
                     "face_id": fid,
@@ -1215,7 +1206,7 @@ class DeepfakeVideoPipeline(DeepfakePipeline):
                 txt_y = int(y1 + 15)
                 txt = f"{fo['display_score']:.2f}"
                 cv2.putText(canvas, txt, (txt_x, txt_y), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.50, (255, 255, 255), 1, cv2.LINE_AA)
+                            0.48, (220, 220, 220), 1, cv2.LINE_AA)
 
             # Capture frame with highest deepfake score for keyframe
             current_max_fused = max([f["fused_score"] for f in faces_in_frame]) if faces_in_frame else 0.0

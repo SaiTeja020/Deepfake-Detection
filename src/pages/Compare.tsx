@@ -165,7 +165,15 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
       <div className="flex items-center justify-between mb-8">
         <h3 className="text-[11px] font-bold uppercase tracking-[0.3em] text-blue-600 heading-font">{modelName} Benchmarks</h3>
         {result && (
-          <div className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${result.prediction === 'Fake' ? 'bg-rose-500/10 text-rose-500' : 'bg-emerald-500/10 text-emerald-500'}`}>
+          <div className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest ${
+            result.prediction === 'Fake' || result.prediction === 'Deepfake'
+              ? 'bg-rose-500/10 text-rose-500'
+              : result.prediction === 'Suspicious'
+                ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'
+                : result.prediction === 'Uncertain'
+                  ? 'bg-slate-500/10 text-slate-400 border border-slate-500/20'
+                  : 'bg-emerald-500/10 text-emerald-500'
+            }`}>
             {result.prediction}
           </div>
         )}
@@ -214,7 +222,7 @@ const Compare: React.FC<{ theme?: 'dark' | 'light' }> = ({ theme = 'dark' }) => 
           <div className="space-y-4">
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500/50 heading-font">Forensic Signature</h4>
             <p className="text-xs leading-relaxed font-light dashboard-title-desc">
-              {modelName} identifies {result.prediction === 'Fake' ? 'anomalous patterns in focal regions' : 'natural biological consistency'} across the face mesh.
+              {modelName} identifies {result.prediction === 'Fake' || result.prediction === 'Deepfake' || result.prediction === 'Suspicious' ? 'anomalous patterns in focal regions' : 'natural biological consistency'} across the face mesh.
               {modelName === 'ViT' ? ' Captures wide-range dependencies.' : ' Analyzes hierarchical scales.'}
             </p>
           </div>

@@ -103,7 +103,9 @@ const CustomCursor = ({ isDark }: { isDark: boolean }) => {
 // ---------------------------------------------------------------------------
 const VERDICT_STYLES: Record<string, { border: string; bg: string; text: string; dot: string }> = {
   Deepfake: { border: 'border-rose-500/30', bg: 'bg-rose-500/10', text: 'text-rose-400', dot: 'bg-rose-500' },
-  Suspicious: { border: 'border-amber-500/30', bg: 'bg-amber-500/10', text: 'text-amber-400', dot: 'bg-amber-500' },
+  Fake: { border: 'border-rose-500/30', bg: 'bg-rose-500/10', text: 'text-rose-400', dot: 'bg-rose-500' },
+  Suspicious: { border: 'border-yellow-500/30', bg: 'bg-yellow-500/10', text: 'text-yellow-400', dot: 'bg-yellow-500' },
+  Uncertain: { border: 'border-slate-500/30', bg: 'bg-slate-500/10', text: 'text-slate-400', dot: 'bg-slate-500' },
   Real: { border: 'border-emerald-500/30', bg: 'bg-emerald-500/10', text: 'text-emerald-400', dot: 'bg-emerald-500' },
 };
 
@@ -1288,11 +1290,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   : 'Swin Protocol (Hierarchical)'}
             </h3>
           </div>
-          <div className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest self-start sm:self-center border ${resultData.prediction === 'Fake'
-            ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]'
-            : resultData.prediction === 'Suspicious'
-              ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
-              : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+          <div className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest self-start sm:self-center border ${
+            resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+              ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]'
+              : resultData.prediction === 'Suspicious'
+                ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20 shadow-[0_0_15px_rgba(234,179,8,0.1)]'
+                : resultData.prediction === 'Uncertain'
+                  ? 'bg-slate-500/10 text-slate-400 border-slate-500/20 shadow-[0_0_15px_rgba(100,116,139,0.1)]'
+                  : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
             }`}>
             {resultData.prediction} IDENTIFIED
           </div>
@@ -1302,7 +1307,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         <div className="grid grid-cols-2 gap-4 p-4 rounded-xl dashboard-insight-box border border-zinc-900/5 dark:border-zinc-800/40">
           <div>
             <p className="dashboard-panel-title">Confidence Spectrum</p>
-            <p className={`text-3xl font-black tracking-tight heading-font ${resultData.prediction === 'Fake' ? 'text-rose-500' : resultData.prediction === 'Suspicious' ? 'text-amber-500' : 'text-emerald-500'
+            <p className={`text-3xl font-black tracking-tight heading-font ${
+              resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                ? 'text-rose-500'
+                : resultData.prediction === 'Suspicious'
+                  ? 'text-yellow-500'
+                  : resultData.prediction === 'Uncertain'
+                    ? 'text-slate-400'
+                    : 'text-emerald-500'
               }`}>{confidencePct}%</p>
           </div>
           <div className="border-l border-zinc-900/10 dark:border-zinc-800/40 pl-4">
@@ -1319,11 +1331,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
           </div>
           <div className={`h-2.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-zinc-950' : 'bg-slate-100'}`}>
             <div
-              className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${resultData.prediction === 'Fake'
-                ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
-                : resultData.prediction === 'Suspicious'
-                  ? 'bg-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.4)]'
-                  : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+              className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
+                resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                  ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
+                  : resultData.prediction === 'Suspicious'
+                    ? 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.4)]'
+                    : resultData.prediction === 'Uncertain'
+                      ? 'bg-slate-500 shadow-[0_0_15px_rgba(100,116,139,0.4)]'
+                      : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
                 }`}
               style={{ width: `${confidencePct}%` }}
             />
@@ -1485,11 +1500,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   <ul className="space-y-2 font-medium">
                     {resultData.structured_explanation!.primary_findings.map((finding, idx) => (
                       <li key={idx} className="flex items-start space-x-2">
-                        <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${resultData.prediction === 'Fake'
-                          ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.4)]'
-                          : resultData.prediction === 'Suspicious'
-                            ? 'bg-amber-500 shadow-[0_0_6px_rgba(245,158,11,0.4)]'
-                            : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]'
+                        <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
+                          resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                            ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.4)]'
+                            : resultData.prediction === 'Suspicious'
+                              ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.4)]'
+                              : resultData.prediction === 'Uncertain'
+                                ? 'bg-slate-500 shadow-[0_0_6px_rgba(100,116,139,0.4)]'
+                                : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]'
                           }`} />
                         <span className={isDark ? 'text-zinc-300' : 'text-slate-700'}>{finding}</span>
                       </li>
@@ -1514,7 +1532,14 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                           : ['Natural eye geometry', 'Consistent skin tone']
                     ).map((item, idx) => (
                       <li key={idx} className="flex items-center space-x-2">
-                        <div className={`w-1 h-1 rounded-full opacity-60 ${resultData.prediction === 'Fake' ? 'bg-rose-500' : resultData.prediction === 'Suspicious' ? 'bg-amber-500' : 'bg-emerald-500'
+                        <div className={`w-1 h-1 rounded-full opacity-60 ${
+                          resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                            ? 'bg-rose-500'
+                            : resultData.prediction === 'Suspicious'
+                              ? 'bg-yellow-500'
+                              : resultData.prediction === 'Uncertain'
+                                ? 'bg-slate-500'
+                                : 'bg-emerald-500'
                           }`} />
                         <span className="opacity-80">{item}</span>
                       </li>
