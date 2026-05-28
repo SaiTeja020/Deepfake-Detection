@@ -941,16 +941,23 @@ def detect_deepfake():
                 print(f"Visualization error: {e}")
 
         inference_time = round((time.time() - start_time) * 1000)
-        conf_raw = pipeline_result["confidence"]          # [0, 1] fraction from pipeline
-        conf_pct = round(float(conf_raw) * 100, 2)        # convert to percentage for API response
+        conf_raw = pipeline_result["confidence"]          # [0, 1] fraction from pipeline (fake probability)
         final_label = pipeline_result["final_label"]
+
+        # Display confidence for the identified class:
+        # Real/Uncertain -> show real confidence (1 - fake_prob)
+        # Deepfake/Suspicious -> show fake confidence (fake_prob)
+        if final_label in ("Real", "Uncertain"):
+            conf_pct = round((1.0 - float(conf_raw)) * 100, 2)
+        else:
+            conf_pct = round(float(conf_raw) * 100, 2)
 
         # Build Forensic Evidence Packet
         interpreter = ForensicInterpreter()
         face_interpretations = [interpreter.interpret_face(f, mask, global_fake_prob) for f in face_list]
         evidence_packet = EvidenceBuilder.build(
             verdict=final_label,               # Preserve nuance (Deepfake/Suspicious/Uncertain)
-            confidence=conf_raw,               # Pass raw [0,1] fraction — EvidenceBuilder expects a fraction
+            confidence=conf_pct,               # Pass display percentage — EvidenceBuilder renders with "%" suffix
             faces=face_interpretations,
             attention_outside_faces=outside_fraction,
             model_type=model_type_used,
