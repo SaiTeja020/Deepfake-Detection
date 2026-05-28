@@ -33,6 +33,7 @@ export interface DetectionResult {
   inferenceTime: number;
   attentionMapUrl: string | null;  // null when heatmap generation failed or Supabase offline
   facemeshUrl?: string | null;
+  keyframeUrl?: string | null;
   explanation?: string;
   suspicious_domains?: string[];
   model_consensus?: string;

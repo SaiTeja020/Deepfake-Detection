@@ -1207,7 +1207,9 @@ body {
     border-radius: 1rem; border: 2px dashed #e2e8f0; transition: all 0.3s;
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; position: relative; overflow: hidden;
-    background-color: #f8fafc;
+    background: rgba(248, 250, 252, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
 }
 .dashboard-upload-box:hover { border-color: rgba(37,99,235,0.3); }
 [data-theme='dark'] .dashboard-upload-box {

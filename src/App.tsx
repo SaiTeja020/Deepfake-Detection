@@ -186,6 +186,34 @@ const Sidebar = ({ isCollapsed, setIsCollapsed, isMobileOpen, setMobileOpen, the
   );
 };
 
+const checkConnectivity = async (): Promise<boolean> => {
+  if (!navigator.onLine) return false;
+
+  const endpoints = [
+    'https://www.cloudflare.com/favicon.ico',
+    'https://www.google.com/favicon.ico',
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+      await fetch(`${url}?t=${Date.now()}`, {
+        method: 'HEAD',
+        mode: 'no-cors',
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return true;
+    } catch (e) {
+      // Continue to next endpoint
+    }
+  }
+  return false;
+};
+
 const App: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
@@ -193,18 +221,43 @@ const App: React.FC = () => {
   const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
   const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
   const { user, profile, loading } = useAuth();
-  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
-    const handleOffline = () => setIsOffline(true);
-    const handleOnline = () => setIsOffline(false);
+    let active = true;
+
+    const verifyOfflineStatus = async () => {
+      const online = await checkConnectivity();
+      if (active) {
+        setIsOffline(!online);
+      }
+    };
+
+    // Run initial check
+    verifyOfflineStatus();
+
+    const handleOffline = () => {
+      console.log("OFFLINE DETECTED");
+      setIsOffline(true);
+    };
+
+    const handleOnline = async () => {
+      await verifyOfflineStatus();
+    };
 
     window.addEventListener("offline", handleOffline);
     window.addEventListener("online", handleOnline);
 
+    // Periodic connectivity check every 10 seconds
+    const intervalId = setInterval(async () => {
+      await verifyOfflineStatus();
+    }, 10000);
+
     return () => {
+      active = false;
       window.removeEventListener("offline", handleOffline);
       window.removeEventListener("online", handleOnline);
+      clearInterval(intervalId);
     };
   }, []);
 
@@ -261,19 +314,39 @@ const App: React.FC = () => {
     if (path === '/signup') routeLoaders.signup();
   };
 
-  if (loading) {
+  const handleRetryConnection = async () => {
+    // Wait at least 1.2 seconds to give a smooth visual feedback (loader spin)
+    const checkPromise = checkConnectivity();
+    const delayPromise = new Promise((resolve) => setTimeout(resolve, 1200));
+
+    const [online] = await Promise.all([checkPromise, delayPromise]);
+    setIsOffline(!online);
+  };
+
+  console.log({ loading, isOffline });
+  if (loading && !isOffline) {
     return (
       <div className={`min-h-screen flex items-center justify-center transition-colors duration-500 ${activeTheme === 'dark' ? 'bg-[#09090b]' : 'bg-[#fafafa]'}`}>
         <div className="flex flex-col items-center space-y-4">
           <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
-          <p className={`text-sm font-medium tracking-widest uppercase opacity-50 ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>Initializing Terminal</p>
+          <p className={`text-sm font-medium tracking-widest uppercase opacity-50 ${activeTheme === 'dark' ? 'text-white' : 'text-slate-900'}`}>
+            Initializing Terminal
+          </p>
         </div>
       </div>
     );
   }
+  if (isOffline) {
+    return (
+      <OfflinePage
+        theme={activeTheme}
+        onRetry={handleRetryConnection}
+      />
+    );
+  }
 
   if (isOffline) {
-    return <OfflinePage theme={activeTheme} />;
+    return <OfflinePage theme={activeTheme} onRetry={handleRetryConnection} />;
   }
 
   const sidebarCollapsed = isCollapsed && !isHovered;

@@ -27,6 +27,7 @@ import { auth } from '../firebase';
 import { saveScanHistory, uploadScanMedia } from '../services/api';
 import { useAuth } from '../context/AuthContext';
 import { HoverCard, HoverCardTrigger, HoverCardContent } from '../components/ui/hover-card';
+import VideoPipeline from './ThreePipeline';
 
 const useMousePosition = () => {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
@@ -196,7 +197,7 @@ if (typeof window !== 'undefined') {
   window.addEventListener('mousemove', updateLastKnownMouse);
 }
 
-const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
+const ImagePipeline: React.FC<{ theme: 'dark' | 'light'; selectedModel: ModelType }> = ({ theme, selectedModel }) => {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -207,7 +208,11 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     const height = container.clientHeight || 550;
     const isDark = theme === 'dark';
 
+    const modelStr = String(selectedModel || 'vit').toLowerCase();
+    const isViT = modelStr.includes('vit');
+
     // Scene & Camera init
+    const tempV = new THREE.Vector3();
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
     camera.position.set(1.65, 3.5, 17.5);
@@ -256,6 +261,7 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     }
 
     const nodeInfoMap = new Map();
+    const interactiveMeshes: THREE.Object3D[] = [];
 
     // High-tech Sci-Fi Node Factory
     function createSciFiNode(x: number, y: number, z: number, color: THREE.ColorRepresentation, label: string, size = 1.8) {
@@ -345,6 +351,9 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       const hoverCollider = new THREE.Mesh(hoverColliderGeo, hoverColliderMat);
       hoverCollider.name = 'hoverCollider';
       group.add(hoverCollider);
+
+      interactiveMeshes.push(coreMesh);
+      interactiveMeshes.push(hoverCollider);
 
       // Floating Glow point
       const gl = addGlow(x, y, z + 0.35, color, isDark ? 2.8 : 1.8, 5);
@@ -586,9 +595,11 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       accentHex: '#aa00ff',
       info: {
         label: 'Foresight Classification',
-        description: 'The Foresight ensemble combines Vision Transformer, Swin Transformer and CNN-based forensic features to classify each detected face.',
+        description: selectedModel === ModelType.ViT
+          ? 'The Foresight ensemble utilizes the Vision Transformer (ViT) backbone combined with CNN forensic layers to classify each detected face.'
+          : 'The Foresight pipeline utilizes the high-capacity Swin Transformer backbone to perform fine-grained patch-level face classification.',
         stats: [
-          { key: 'Models', val: 'ViT + Swin + CNN' },
+          { key: 'Models', val: selectedModel === ModelType.ViT ? 'ViT + CNN' : 'Swin' },
           { key: 'Analysis', val: 'Spatial Features' },
           { key: 'Output', val: 'Confidence Score' },
           { key: 'Decision', val: 'Real / Fake' },
@@ -747,29 +758,12 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     let hoveredNode: any = null;
 
     // Stable hover state manager with flicker grace period/debounce configurations
-    const hoverState = {
-      node: null as any,       // Active hovered node group
-      targetNode: null as any, // Node group currently being intersected
-      lastHitTime: 0,          // Timestamp of last successful intersection
-      gracePeriod: 150,        // Grace period in milliseconds to debounce flickering
-    };
-
-    const handleMouseMoveGlobal = (e: MouseEvent) => {
-      mouseX = e.clientX;
-      mouseY = e.clientY;
-      lastKnownMouseX = e.clientX;
-      lastKnownMouseY = e.clientY;
-    };
-    document.addEventListener('mousemove', handleMouseMoveGlobal);
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
 
     // Game loop / Animation setup
     let time = 0;
     let animId: number;
-
-    // Projected coordinate calculation vectors
-    const tempProjCenter = new THREE.Vector3();
-    const tempProjOffset = new THREE.Vector3();
-    const rightVec = new THREE.Vector3();
 
     function animate() {
       animId = requestAnimationFrame(animate);
@@ -777,76 +771,29 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
 
       controls.update();
 
-      const containerRect = container.getBoundingClientRect();
+      const rect = container.getBoundingClientRect();
+      mouse.x = ((lastKnownMouseX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((lastKnownMouseY - rect.top) / rect.height) * 2 + 1;
+
+      raycaster.setFromCamera(mouse, camera);
+      const intersects = raycaster.intersectObjects(interactiveMeshes, true);
+
       let foundGroup: any = null;
-      let minDistance = Infinity;
-
-      for (const group of nodeInfoMap.keys()) {
-        group.getWorldPosition(tempProjCenter);
-
-        // Project center point to NDC
-        const projCenter = tempProjCenter.clone();
-        projCenter.project(camera);
-
-        // Skip nodes projected behind the camera (outside coordinate range of frustum)
-        if (projCenter.z > 1) continue;
-
-        // Convert NDC to screen pixels (relative to the viewport)
-        const screenCenterX = containerRect.left + (projCenter.x * 0.5 + 0.5) * containerRect.width;
-        const screenCenterY = containerRect.top + (-projCenter.y * 0.5 + 0.5) * containerRect.height;
-
-        // Calculate screen bounding radius dynamically from camera position and node size
-        const size = (group as any).userData.size || 1.8;
-
-        // Get camera right vector in world space to find edge
-        rightVec.set(1, 0, 0).applyQuaternion(camera.quaternion);
-
-        tempProjOffset.copy(tempProjCenter).addScaledVector(rightVec, size * 0.9);
-        const projOffset = tempProjOffset.clone();
-        projOffset.project(camera);
-
-        const screenOffsetX = containerRect.left + (projOffset.x * 0.5 + 0.5) * containerRect.width;
-        const screenOffsetY = containerRect.top + (-projOffset.y * 0.5 + 0.5) * containerRect.height;
-
-        const screenRadius = Math.sqrt(
-          Math.pow(screenOffsetX - screenCenterX, 2) +
-          Math.pow(screenOffsetY - screenCenterY, 2)
-        );
-
-        // Euclidean distance from mouse cursor to projected node center
-        const dx = mouseX - screenCenterX;
-        const dy = mouseY - screenCenterY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        // Apply a minimum interactive radius of 40px when extremely zoomed out
-        const effectiveRadius = Math.max(screenRadius, 40);
-
-        if (dist <= effectiveRadius) {
-          if (dist < minDistance) {
-            minDistance = dist;
-            foundGroup = group;
+      if (intersects.length > 0) {
+        let obj: THREE.Object3D | null = intersects[0].object;
+        while (obj) {
+          if (nodeInfoMap.has(obj)) {
+            foundGroup = obj;
+            break;
           }
-        }
-      }
-
-      const now = performance.now();
-
-      // Debounce & State Machine logic
-      if (foundGroup) {
-        // If we hit a node, we immediately set it as the target and reset the grace timer
-        hoverState.targetNode = foundGroup;
-        hoverState.lastHitTime = now;
-      } else {
-        // If we miss, check if the grace period has expired
-        if (now - hoverState.lastHitTime > hoverState.gracePeriod) {
-          hoverState.targetNode = null;
+          obj = obj.parent;
         }
       }
 
       // Handle transitions of the actual visible hoveredNode
-      if (hoverState.targetNode !== hoveredNode) {
-        if (hoverState.targetNode) {
-          hoveredNode = hoverState.targetNode;
+      if (foundGroup !== hoveredNode) {
+        if (foundGroup) {
+          hoveredNode = foundGroup;
           const { info, accentHex } = nodeInfoMap.get(hoveredNode);
           buildTooltip(info, accentHex);
           tooltip.style.opacity = '1';
@@ -860,12 +807,28 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         }
       }
 
-      // Track tooltip placement offsets (positioning relative to viewport mouse coordinates)
+      // Track tooltip placement offsets (positioning relative to hovered 3D node world position)
       if (hoveredNode) {
-        let tx = mouseX + 20;
-        let ty = mouseY - 10;
-        if (tx + 280 > window.innerWidth) tx = mouseX - 280;
-        if (ty + 220 > window.innerHeight) ty = mouseY - 220;
+        hoveredNode.getWorldPosition(tempV);
+        tempV.project(camera);
+
+        const rect = container.getBoundingClientRect();
+        let tx = rect.left + (tempV.x * 0.5 + 0.5) * rect.width + 30; // 30px offset to the right
+        let ty = rect.top + (-tempV.y * 0.5 + 0.5) * rect.height - 40; // 40px offset upwards
+
+        // Prevent tooltip from clipping outside the screen
+        const tooltipWidth = 280;
+        const tooltipHeight = 220;
+        if (tx + tooltipWidth > window.innerWidth) {
+          tx = rect.left + (tempV.x * 0.5 + 0.5) * rect.width - tooltipWidth - 30; // offset to the left instead
+        }
+        if (ty + tooltipHeight > window.innerHeight) {
+          ty = window.innerHeight - tooltipHeight - 20;
+        }
+        if (ty < 0) {
+          ty = 20;
+        }
+
         tooltip.style.left = tx + 'px';
         tooltip.style.top = ty + 'px';
       }
@@ -952,7 +915,6 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
     // Memory garbage disposal
     return () => {
       cancelAnimationFrame(animId);
-      document.removeEventListener('mousemove', handleMouseMoveGlobal);
       window.removeEventListener('resize', handleResize);
       renderer.domElement.removeEventListener('mousedown', handleMouseDown);
       renderer.domElement.removeEventListener('mouseup', handleMouseUp);
@@ -974,7 +936,7 @@ const ThreePipeline: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       });
       renderer.dispose();
     };
-  }, [theme]);
+  }, [theme, selectedModel]);
 
   return (
     <div className="card-foresight relative w-full h-[550px] overflow-hidden rounded-2xl border border-zinc-900/10 dark:border-zinc-800/40 bg-white/5 dark:bg-black/5">
@@ -1111,7 +1073,7 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
       const fileExt = file.name.split('.').pop()?.toLowerCase();
       const validVideoExtensions = ['mp4', 'avi', 'mov', 'webm', 'mkv', '3gp', 'ogg'];
       const isValidVideo = file.type.startsWith("video/") || (fileExt && validVideoExtensions.includes(fileExt));
-      
+
       if (!isValidVideo) {
         setError("Invalid file format. Please upload a valid video.");
         setVideoUrl(null);
@@ -1290,14 +1252,13 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   : 'Swin Protocol (Hierarchical)'}
             </h3>
           </div>
-          <div className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest self-start sm:self-center border ${
-            resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
-              ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]'
-              : resultData.prediction === 'Suspicious'
-                ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20 shadow-[0_0_15px_rgba(234,179,8,0.1)]'
-                : resultData.prediction === 'Uncertain'
-                  ? 'bg-slate-500/10 text-slate-400 border-slate-500/20 shadow-[0_0_15px_rgba(100,116,139,0.1)]'
-                  : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+          <div className={`px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest self-start sm:self-center border ${resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+            ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-[0_0_15px_rgba(244,63,94,0.1)]'
+            : resultData.prediction === 'Suspicious'
+              ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20 shadow-[0_0_15px_rgba(234,179,8,0.1)]'
+              : resultData.prediction === 'Uncertain'
+                ? 'bg-slate-500/10 text-slate-400 border-slate-500/20 shadow-[0_0_15px_rgba(100,116,139,0.1)]'
+                : 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
             }`}>
             {resultData.prediction} IDENTIFIED
           </div>
@@ -1307,14 +1268,13 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         <div className="grid grid-cols-2 gap-4 p-4 rounded-xl dashboard-insight-box border border-zinc-900/5 dark:border-zinc-800/40">
           <div>
             <p className="dashboard-panel-title">Confidence Spectrum</p>
-            <p className={`text-3xl font-black tracking-tight heading-font ${
-              resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
-                ? 'text-rose-500'
-                : resultData.prediction === 'Suspicious'
-                  ? 'text-yellow-500'
-                  : resultData.prediction === 'Uncertain'
-                    ? 'text-slate-400'
-                    : 'text-emerald-500'
+            <p className={`text-3xl font-black tracking-tight heading-font ${resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+              ? 'text-rose-500'
+              : resultData.prediction === 'Suspicious'
+                ? 'text-yellow-500'
+                : resultData.prediction === 'Uncertain'
+                  ? 'text-slate-400'
+                  : 'text-emerald-500'
               }`}>{confidencePct}%</p>
           </div>
           <div className="border-l border-zinc-900/10 dark:border-zinc-800/40 pl-4">
@@ -1331,14 +1291,13 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
           </div>
           <div className={`h-2.5 w-full rounded-full overflow-hidden ${isDark ? 'bg-zinc-950' : 'bg-slate-100'}`}>
             <div
-              className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${
-                resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
-                  ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
-                  : resultData.prediction === 'Suspicious'
-                    ? 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.4)]'
-                    : resultData.prediction === 'Uncertain'
-                      ? 'bg-slate-500 shadow-[0_0_15px_rgba(100,116,139,0.4)]'
-                      : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
+              className={`h-full transition-all duration-[1500ms] ease-[cubic-bezier(0.23,1,0.32,1)] ${resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                ? 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.4)]'
+                : resultData.prediction === 'Suspicious'
+                  ? 'bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.4)]'
+                  : resultData.prediction === 'Uncertain'
+                    ? 'bg-slate-500 shadow-[0_0_15px_rgba(100,116,139,0.4)]'
+                    : 'bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.4)]'
                 }`}
               style={{ width: `${confidencePct}%` }}
             />
@@ -1500,14 +1459,13 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                   <ul className="space-y-2 font-medium">
                     {resultData.structured_explanation!.primary_findings.map((finding, idx) => (
                       <li key={idx} className="flex items-start space-x-2">
-                        <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
-                          resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
-                            ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.4)]'
-                            : resultData.prediction === 'Suspicious'
-                              ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.4)]'
-                              : resultData.prediction === 'Uncertain'
-                                ? 'bg-slate-500 shadow-[0_0_6px_rgba(100,116,139,0.4)]'
-                                : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]'
+                        <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                          ? 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.4)]'
+                          : resultData.prediction === 'Suspicious'
+                            ? 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.4)]'
+                            : resultData.prediction === 'Uncertain'
+                              ? 'bg-slate-500 shadow-[0_0_6px_rgba(100,116,139,0.4)]'
+                              : 'bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]'
                           }`} />
                         <span className={isDark ? 'text-zinc-300' : 'text-slate-700'}>{finding}</span>
                       </li>
@@ -1532,14 +1490,13 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
                           : ['Natural eye geometry', 'Consistent skin tone']
                     ).map((item, idx) => (
                       <li key={idx} className="flex items-center space-x-2">
-                        <div className={`w-1 h-1 rounded-full opacity-60 ${
-                          resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
-                            ? 'bg-rose-500'
-                            : resultData.prediction === 'Suspicious'
-                              ? 'bg-yellow-500'
-                              : resultData.prediction === 'Uncertain'
-                                ? 'bg-slate-500'
-                                : 'bg-emerald-500'
+                        <div className={`w-1 h-1 rounded-full opacity-60 ${resultData.prediction === 'Fake' || resultData.prediction === 'Deepfake'
+                          ? 'bg-rose-500'
+                          : resultData.prediction === 'Suspicious'
+                            ? 'bg-yellow-500'
+                            : resultData.prediction === 'Uncertain'
+                              ? 'bg-slate-500'
+                              : 'bg-emerald-500'
                           }`} />
                         <span className="opacity-80">{item}</span>
                       </li>
@@ -1605,22 +1562,28 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
               <h1 className="text-4xl font-black tracking-tighter heading-font">Facial Analysis</h1>
               <p className="dashboard-title-desc">Verify biometric authenticity via transformer-based forensics.</p>
             </div>
-            <div className="flex bg-zinc-100 dark:bg-zinc-900 p-1 rounded-xl w-fit relative">
+            <div className="flex bg-zinc-100 dark:bg-zinc-900/80 backdrop-blur-xl p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-lg w-fit relative">
               <motion.div
-                className="absolute inset-y-1 w-[calc(50%-4px)] bg-white dark:bg-zinc-800 rounded-lg shadow-sm"
+                className="absolute inset-y-1 w-[calc(50%-4px)] bg-blue-600 rounded-xl shadow-lg shadow-blue-500/30"
                 initial={false}
                 animate={{ x: analysisMode === 'video' ? '100%' : '0%' }}
                 transition={{ type: "spring", stiffness: 300, damping: 30 }}
               />
               <button
                 onClick={() => handleModeChange('image')}
-                className={`relative px-6 py-2 text-xs font-bold uppercase tracking-widest z-10 transition-colors ${analysisMode === 'image' ? 'text-zinc-900 dark:text-white' : 'text-zinc-500'}`}
+                className={`relative px-8 py-3 text-xs font-black uppercase tracking-[0.25em] z-10 transition-all duration-300 ${analysisMode === 'image'
+                  ? 'text-white'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-white'
+                  }`}
               >
                 Image
               </button>
               <button
                 onClick={() => handleModeChange('video')}
-                className={`relative px-6 py-2 text-xs font-bold uppercase tracking-widest z-10 transition-colors ${analysisMode === 'video' ? 'text-zinc-900 dark:text-white' : 'text-zinc-500'}`}
+                className={`relative px-8 py-3 text-xs font-black uppercase tracking-[0.25em] z-10 transition-all duration-300 ${analysisMode === 'video'
+                  ? 'text-white'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-white'
+                  }`}
               >
                 Video
               </button>
@@ -2012,21 +1975,23 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
         )}
 
         {/* How Does Our Detection Work? Section */}
-        {analysisMode === 'image' && (
-          <div className="space-y-6 pt-12 border-t border-zinc-900/10 dark:border-zinc-800/40 animate-in fade-in duration-500">
-            <div className="text-center space-y-2">
-              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/70">Detection Pipeline</span>
-              <h3 className="text-2xl font-black tracking-tight heading-font">How Does Our Detection Work?</h3>
-              <p className="text-xs dashboard-title-desc max-w-2xl mx-auto leading-relaxed">
-                Foresight utilizes a multi-layered biometrics analysis pipeline. We evaluate pixel integrity, spectral noise, and geometry transitions in real-time.
-              </p>
-            </div>
-
-            <div className="pt-4">
-              <ThreePipeline theme={theme} />
-            </div>
+        <div className="space-y-6 pt-12 border-t border-zinc-900/10 dark:border-zinc-800/40 animate-in fade-in duration-500">
+          <div className="text-center space-y-2">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500/70">Detection Pipeline</span>
+            <h3 className="text-2xl font-black tracking-tight heading-font">How Does Our Detection Work?</h3>
+            <p className="text-xs dashboard-title-desc max-w-2xl mx-auto leading-relaxed">
+              Foresight utilizes a multi-layered biometrics analysis pipeline. We evaluate pixel integrity, spectral noise, and geometry transitions in real-time.
+            </p>
           </div>
-        )}
+
+          <div className="pt-4">
+            {analysisMode === 'image' ? (
+              <ImagePipeline theme={theme} selectedModel={selectedModel} />
+            ) : (
+              <VideoPipeline theme={theme} />
+            )}
+          </div>
+        </div>
 
       </div>
     </div>

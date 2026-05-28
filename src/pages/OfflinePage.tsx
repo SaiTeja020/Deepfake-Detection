@@ -8,10 +8,27 @@ import {
 
 interface OfflinePageProps {
   theme: "dark" | "light";
+  onRetry?: () => Promise<void>;
 }
 
-const OfflinePage: React.FC<OfflinePageProps> = ({ theme }) => {
+const OfflinePage: React.FC<OfflinePageProps> = ({ theme, onRetry }) => {
   const isDark = theme === "dark";
+  const [isChecking, setIsChecking] = React.useState(false);
+
+  const handleRetry = async () => {
+    if (!onRetry) {
+      window.location.reload();
+      return;
+    }
+    setIsChecking(true);
+    try {
+      await onRetry();
+    } catch (error) {
+      console.error("Error during connection retry:", error);
+    } finally {
+      setIsChecking(false);
+    }
+  };
 
   return (
     <div
@@ -165,11 +182,12 @@ const OfflinePage: React.FC<OfflinePageProps> = ({ theme }) => {
 
         {/* Retry Button */}
         <button
-          onClick={() => window.location.reload()}
-          className="group inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black uppercase tracking-[0.25em] transition-all duration-300 hover:scale-[1.03] shadow-[0_10px_40px_rgba(37,99,235,0.35)]"
+          onClick={handleRetry}
+          disabled={isChecking}
+          className="group inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black uppercase tracking-[0.25em] transition-all duration-300 hover:scale-[1.03] shadow-[0_10px_40px_rgba(37,99,235,0.35)] disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <ArrowPathIcon className="w-4 h-4 group-hover:rotate-180 transition-transform duration-700" />
-          Retry Connection
+          <ArrowPathIcon className={`w-4 h-4 ${isChecking ? "animate-spin" : "group-hover:rotate-180 transition-transform duration-700"}`} />
+          {isChecking ? "Checking..." : "Retry Connection"}
         </button>
 
         {/* Footer */}
