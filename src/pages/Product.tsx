@@ -971,6 +971,18 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
   const { profile } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Diagnostic useEffect to log theme state in Product.tsx
+  useEffect(() => {
+    const html = document.documentElement;
+    console.log('[Product Theme Diagnostic]', {
+      themeProp: theme,
+      htmlClassList: html.className,
+      htmlDataTheme: html.getAttribute('data-theme'),
+      isSystemDark: window.matchMedia('(prefers-color-scheme: dark)').matches,
+      hasDarkClass: html.classList.contains('dark')
+    });
+  }, [theme]);
+
   const MAX_IMAGE_SIZE_MB = 5;
   const MAX_VIDEO_SIZE_MB = 50;
 
@@ -1562,28 +1574,16 @@ const Product: React.FC<{ theme: 'dark' | 'light' }> = ({ theme }) => {
               <h1 className="text-4xl font-black tracking-tighter heading-font">Facial Analysis</h1>
               <p className="dashboard-title-desc">Verify biometric authenticity via transformer-based forensics.</p>
             </div>
-            <div className="flex bg-zinc-100 dark:bg-zinc-900/80 backdrop-blur-xl p-1 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-lg w-fit relative">
-              <motion.div
-                className="absolute inset-y-1 w-[calc(50%-4px)] bg-blue-600 rounded-xl shadow-lg shadow-blue-500/30"
-                initial={false}
-                animate={{ x: analysisMode === 'video' ? '100%' : '0%' }}
-                transition={{ type: "spring", stiffness: 300, damping: 30 }}
-              />
+            <div className="product-selector-container">
               <button
                 onClick={() => handleModeChange('image')}
-                className={`relative px-8 py-3 text-xs font-black uppercase tracking-[0.25em] z-10 transition-all duration-300 ${analysisMode === 'image'
-                  ? 'text-white'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-white'
-                  }`}
+                className={`product-selector-btn ${analysisMode === 'image' ? 'active' : ''}`}
               >
                 Image
               </button>
               <button
                 onClick={() => handleModeChange('video')}
-                className={`relative px-8 py-3 text-xs font-black uppercase tracking-[0.25em] z-10 transition-all duration-300 ${analysisMode === 'video'
-                  ? 'text-white'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-white'
-                  }`}
+                className={`product-selector-btn ${analysisMode === 'video' ? 'active' : ''}`}
               >
                 Video
               </button>

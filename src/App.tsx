@@ -218,7 +218,15 @@ const App: React.FC = () => {
   const [isCollapsed, setIsCollapsed] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [isMobileOpen, setMobileOpen] = useState(false);
-  const [themeMode, setThemeMode] = useState<'dark' | 'light' | 'system'>('system');
+  const [themeMode, setThemeMode] = useState<'dark' | 'light'>(() => {
+    const saved = localStorage.getItem('foresight_theme');
+    if (saved === 'dark' || saved === 'light') {
+      return saved;
+    }
+    // 'system' or not set -> resolve once using prefers-color-scheme
+    const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    return systemPrefersDark ? 'dark' : 'light';
+  });
   const [activeTheme, setActiveTheme] = useState<'dark' | 'light'>('dark');
   const { user, profile, loading } = useAuth();
   const [isOffline, setIsOffline] = useState(false);
@@ -263,38 +271,62 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const root = document.documentElement;
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
-    const applyTheme = (mode: 'dark' | 'light' | 'system') => {
-      let resolvedTheme: 'dark' | 'light' = 'dark';
-      if (mode === 'system') {
-        resolvedTheme = mediaQuery.matches ? 'dark' : 'light';
+    const applyTheme = (mode: 'dark' | 'light') => {
+      const resolvedTheme = mode;
+
+      // Capture values for debug logs before applying changes
+      const prevActiveTheme = root.getAttribute('data-theme') || 'none';
+      const prevClassName = root.className;
+
+      // Update state
+      setActiveTheme(resolvedTheme);
+
+      // DOM attribute synchronization
+      root.setAttribute('data-theme', resolvedTheme);
+
+      // DOM class synchronization for Tailwind class strategy
+      if (resolvedTheme === 'dark') {
+        root.classList.add('dark');
       } else {
-        resolvedTheme = mode;
+        root.classList.remove('dark');
       }
 
-      setActiveTheme(resolvedTheme);
-      root.setAttribute('data-theme', resolvedTheme);
+      // Sync with LocalStorage immediately (only if not set to 'system' globally in settings)
+      const currentStored = localStorage.getItem('foresight_theme');
+      if (currentStored !== 'system') {
+        localStorage.setItem('foresight_theme', mode);
+      }
+
+      // Temporary Debug Logs
+      console.log('[Theme Debug Log]', {
+        previousTheme: prevActiveTheme,
+        newTheme: resolvedTheme,
+        localStorageThemeValue: localStorage.getItem('foresight_theme'),
+        documentElementClassName: root.className,
+      });
     };
 
     applyTheme(themeMode);
-
-    const listener = (e: MediaQueryListEvent) => {
-      if (themeMode === 'system') {
-        applyTheme('system');
-      }
-    };
-
-    mediaQuery.addEventListener('change', listener);
-    return () => mediaQuery.removeEventListener('change', listener);
   }, [themeMode]);
 
   const toggleTheme = () => {
-    setThemeMode(prev => {
-      if (prev === 'dark') return 'light';
-      if (prev === 'light') return 'system';
-      return 'dark'; // system -> dark
-    });
+    setThemeMode(prev => prev === 'dark' ? 'light' : 'dark');
+  };
+
+  const handleSetThemeFromSettings = (newMode: 'dark' | 'light' | 'system' | ((prev: 'dark' | 'light' | 'system') => 'dark' | 'light' | 'system')) => {
+    let resolvedMode: 'dark' | 'light' = 'dark';
+    const computedMode = typeof newMode === 'function' ? newMode(themeMode as any) : newMode;
+
+    if (computedMode === 'system') {
+      const systemPrefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      resolvedMode = systemPrefersDark ? 'dark' : 'light';
+      localStorage.setItem('foresight_theme', 'system');
+    } else {
+      resolvedMode = computedMode;
+      localStorage.setItem('foresight_theme', computedMode);
+    }
+    setThemeMode(resolvedMode);
   };
 
   const handleLogout = async () => {
@@ -369,7 +401,7 @@ const App: React.FC = () => {
                 <Route path="/compare" element={user ? <Compare theme={activeTheme} /> : <Navigate to="/login" />} />
                 <Route path="/profile" element={user ? <Profile theme={activeTheme} /> : <Navigate to="/login" />} />
                 {/* Note: Settings now consumes themeMode directly instead of activeTheme to track the system explicitly */}
-                <Route path="/settings" element={user ? <Settings theme={themeMode} setTheme={setThemeMode} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
+                <Route path="/settings" element={user ? <Settings theme={(localStorage.getItem('foresight_theme') as any) || 'system'} setTheme={handleSetThemeFromSettings as any} activeTheme={activeTheme} /> : <Navigate to="/login" />} />
               </Routes>
             </Suspense>
           </div>
